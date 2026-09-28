@@ -48,10 +48,14 @@ def _post_form(url, data):
 
 
 def _graph_get(access_token, path, params=None, max_retries=3):
-    """Graph GET. 429(Too Many Requests)는 Retry-After/지수 백오프로 재시도."""
-    url = GRAPH_BASE + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
+    """Graph GET. 429(Too Many Requests)는 Retry-After/지수 백오프로 재시도.
+    path가 http로 시작하면 @odata.nextLink 같은 전체 URL로 간주."""
+    if path.startswith("http"):
+        url = path
+    else:
+        url = GRAPH_BASE + path
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
     last_err = None
     for attempt in range(max_retries):
         req = urllib.request.Request(
@@ -180,14 +184,53 @@ class TeamsCollector:
                     if sender and sender != me_name and sender not in others:
                         others.append(sender)
             if not others:
-                # 외부/게스트 계정은 members·messages에서 이름이 안 잡히는 경우가 있어
-                # chat id 속 상대방 GUID를 /me/people(주소록)에서 조회해 매칭한다
+                # 최근 메시지에 상대가 없으면(내가 보낸 것뿐) 과거 히스토리를 뒤져
+                # 발신자 이름을 찾는다. 봇/알림 채팅은 application.displayName도
+                # 상대방 이름으로 사용 ("봇 - 아이앤씨 알림" 등)
+                name = self._find_partner_from_history(chat_id, me_name)
+                if name:
+                    others.append(name)
+            if not others:
+                # 그래도 없으면 chat id 속 상대방 GUID를 /me/people(주소록)에서 조회
                 name = self._resolve_oneonone_partner(chat_id, me_name)
                 if name:
                     others.append(name)
             if others:
                 return "1:1 - " + ", ".join(others)
+            # 상대방을 못 찾은 1:1 — 봇 알림/빈 채팅/삭제된 계정 등
+            return "1:1 - (상대방 정보 없음)"
         return chat.get("chatType") or "chat"
+
+    def _find_partner_from_history(self, chat_id, me_name):
+        """채팅 메시지를 더 뒤져서(최대 ~300건) 나 말고 다른 발신자의
+        displayName을 찾는다. 상대가 오래 전에라도 한 번 말했으면 잡힘."""
+        url = (
+            f"/me/chats/{urllib.parse.quote(chat_id, safe='')}"
+            "/messages?$top=50"
+        )
+        for _ in range(6):
+            try:
+                page = _graph_get(self._token, url)
+            except Exception as e:
+                print(f"Warning: history fetch failed for {chat_id[:30]}: {e}")
+                return None
+            for msg in page.get("value", []):
+                sender = ((msg.get("from") or {}).get("user") or {}).get(
+                    "displayName"
+                )
+                if sender and sender != me_name:
+                    return sender
+                # 봇/알림 앱이 보낸 메시지 — user가 아니라 application 발신자
+                app = ((msg.get("from") or {}).get("application") or {}).get(
+                    "displayName"
+                )
+                if app:
+                    return f"봇: {app}"
+            nxt = page.get("@odata.nextLink")
+            if not nxt:
+                return None
+            url = nxt
+        return None
 
     def _resolve_oneonone_partner(self, chat_id, me_name):
         """1:1 채팅 상대방 이름 해석. chat id 형식 `19:{guid}_{guid}@unq.gbl.spaces`
