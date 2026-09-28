@@ -13,6 +13,7 @@ from ide_collector import IDECollector, RecentFileCollector
 from outlook_collector import OutlookCollector, OutlookLogCollector
 from ai_tool_collector import AIToolCollector
 from confluence_collector import ConfluenceCollector
+from teams_collector import TeamsCollector
 from database import ActivityDatabase
 from browser_activity_server import BrowserActivityServer
 
@@ -34,6 +35,7 @@ class IntegratedCollector:
         self.outlook_log_collector = OutlookLogCollector(db_path)
         self.ai_tool_collector = AIToolCollector(db_path)
         self.confluence_collector = ConfluenceCollector(db_path)
+        self.teams_collector = TeamsCollector(db_path)
 
         # Browser activity server (optional)
         self.browser_server = None
@@ -44,6 +46,7 @@ class IntegratedCollector:
         self.outlook_collection_interval = 600  # 10 minutes
         self.ai_tool_collection_interval = 300  # 5 minutes
         self.confluence_collection_interval = 1800  # 30 minutes
+        self.teams_collection_interval = 1800  # 30 minutes
 
         # Control flags
         self.is_running = False
@@ -84,6 +87,13 @@ class IntegratedCollector:
         )
         ai_tool_thread.start()
         self.collection_threads.append(ai_tool_thread)
+
+        # Start Teams collector thread (config 없으면 스텁이라 바로 빈 리스트 반환)
+        teams_thread = threading.Thread(
+            target=self.teams_collection_loop, daemon=True
+        )
+        teams_thread.start()
+        self.collection_threads.append(teams_thread)
 
         # Start browser activity server if enabled
         if self.enable_browser_server:
@@ -223,6 +233,25 @@ class IntegratedCollector:
             # Wait for next collection
             time.sleep(self.ai_tool_collection_interval)
 
+    def teams_collection_loop(self):
+        """Continuous Teams activity collection loop"""
+        while self.is_running:
+            try:
+                teams_activities = (
+                    self.teams_collector.collect_all_teams_activity(days=1)
+                )
+                if teams_activities:
+                    count = self.teams_collector.save_to_database(
+                        teams_activities
+                    )
+                    print(f"Saved {count} Teams activities to database")
+
+            except Exception as e:
+                print(f"Error in Teams collection: {e}")
+
+            # Wait for next collection
+            time.sleep(self.teams_collection_interval)
+
     def stop(self):
         """Stop all collectors"""
         if not self.is_running:
@@ -237,8 +266,6 @@ class IntegratedCollector:
         # Stop browser activity server
         if self.browser_server:
             self.browser_server.stop()
-        if self.file_watcher:
-            self.file_watcher.stop()
 
         # Wait for threads to finish
         for thread in self.collection_threads:

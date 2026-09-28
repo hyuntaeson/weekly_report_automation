@@ -61,6 +61,7 @@
 | Claude Code | ✅ 완료 | `~/.claude/history.jsonl` + `sessions/*.json` |
 | Confluence | ✅ 완료 | REST API (PAT Bearer) + AI 요약 |
 | 브라우저 | ✅ 완료 (Chrome only) | MV3 확장 + 로컬 HTTP 서버 |
+| Teams | ⚙️ 부분 완료 | 회의=Outlook 캘린더 경유 감지. 채팅=Graph API 스텁(자격증명 대기) |
 
 ### 테스트 결과
 
@@ -79,6 +80,7 @@ weekly_report_automation/
 ├── slack_collector.py            # Slack 활동 수집
 ├── ai_tool_collector.py          # AI 툴(Claude Code) 활동 수집
 ├── confluence_collector.py       # Confluence 페이지 활동 수집 (AI 요약 포함)
+├── teams_collector.py            # Teams 활동 수집 (Graph API, config 없으면 스텁)
 ├── llm_summarizer.py             # 사내 LiteLLM Proxy 기반 텍스트 요약기
 ├── report_generator.py           # 주간보고서 생성 (Markdown+Word, 액션별 상세 내역)
 ├── browser_activity_server.py    # 브라우저 확장 수신용 로컬 HTTP 서버

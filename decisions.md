@@ -234,6 +234,16 @@
 - DB에 `source='browser'` 행이 한 번도 기록된 적 없어 조사한 결과, GUI의 "Start Tracking" 버튼은 파일 감시만 시작하고 크롬 확장이 POST하는 로컬 서버(포트 5757)는 켜지 않고 있었음 (별도 스크립트 `integrated_collector.py`를 실행해야만 켜지는 구조였음)
 - 사용자가 GUI 버튼으로만 트래킹을 시작/종료하는 워크플로우를 쓰고 있어서, GUI 경로에서도 브라우저 서버가 자동으로 켜지도록 통일
 
+### 27. Teams 연동: Outlook 캘린더 경유 회의 감지 + Graph API 스텁
+
+**결정**: Teams 채팅/채널 수집은 `teams_collector.py`를 Graph API 기반 스텁으로 구현(`config/teams_config.json` 없으면 빈 리스트). 대신 Teams **회의**는 Outlook 캘린더 수집에서 감지해서 `is_teams_meeting` 플래그로 구분 (Location/본문의 `teams.microsoft.com`, `teams.live.com`, "Microsoft Teams Meeting" 마커 기준)
+
+**이유**:
+- 사내 정책상 Azure AD 앱 등록이 막혀 있을 수 있어 Graph API 자격증명 확보가 불확실 (2026-09-28 사용자 확인)
+- Teams 로컬 캐시(IndexedDB)는 암호화되어 파싱 불가, 로그는 진단용이라 채팅 내용 없음 → Graph 없이 채팅 수집은 사실상 불가
+- 반면 Teams 회의는 Outlook 캘린더에 Teams 링크가 포함된 채로 이미 수집되고 있어서, 감지 로직만 추가하면 자격증명 없이 "Teams 회의 참석" 활동을 별도 구분 가능
+- 자격증명이 확보되면 `teams_collector.py`에 client_credentials 플로우가 이미 구현되어 있어 config 파일 생성만으로 동작
+
 ## ❌ 폐기된 결정
 
 ### 1. 보고서 포맷: PDF/HTML 포함

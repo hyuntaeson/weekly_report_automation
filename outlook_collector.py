@@ -152,6 +152,18 @@ class OutlookCollector:
             return collapsed
         return collapsed[:max_len].rstrip() + '...'
 
+    @staticmethod
+    def _is_teams_meeting(location, body):
+        """캘린더 항목이 Teams 온라인 회의인지 판별.
+        Location 또는 본문에 Teams 참가 링크가 있으면 Teams 회의로 간주."""
+        text = f"{location or ''}\n{body or ''}".lower()
+        teams_markers = [
+            'teams.microsoft.com',
+            'teams.live.com',
+            'microsoft teams meeting',
+        ]
+        return any(marker in text for marker in teams_markers)
+
     def collect_calendar_activity(self, days=7):
         """Collect calendar activity from the last N days"""
         if not self.connect_outlook():
@@ -174,17 +186,29 @@ class OutlookCollector:
             
             for item in items:
                 try:
+                    subject = item.Subject
+                    location = item.Location if hasattr(item, 'Location') else ''
+                    body = ''
+                    try:
+                        body = item.Body if hasattr(item, 'Body') else ''
+                    except Exception:
+                        pass
+
+                    # Teams 온라인 회의인지 판별 (Location/본문에 Teams 링크 존재 여부)
+                    is_teams = self._is_teams_meeting(location, body)
+
                     activity = {
                         'timestamp': item.Start.isoformat() if hasattr(item.Start, 'isoformat') else str(item.Start),
                         'action': 'meeting',
-                        'file_path': f"Meeting: {item.Subject}",
+                        'file_path': f"{'Teams Meeting' if is_teams else 'Meeting'}: {subject}",
                         'file_type': 'calendar',
                         'source': 'outlook',
                         'details': {
-                            'subject': item.Subject,
-                            'location': item.Location if hasattr(item, 'Location') else '',
+                            'subject': subject,
+                            'location': location,
                             'duration': str(item.Duration) if hasattr(item, 'Duration') else '0',
-                            'organizer': item.Organizer if hasattr(item, 'Organizer') else 'Unknown'
+                            'organizer': item.Organizer if hasattr(item, 'Organizer') else 'Unknown',
+                            'is_teams_meeting': is_teams
                         }
                     }
                     activities.append(activity)
