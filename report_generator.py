@@ -54,21 +54,31 @@ class ReportGenerator:
             lstrip_blocks=True,
         )
 
-    def collect_weekly_data(self, week_start=None, week_end=None):
-        """주간 데이터 수집 및 집계."""
-        resolved_week_start, resolved_week_end = self._resolve_week_range(
-            week_start, week_end
-        )
-
+    def fetch_week_activities(self, week_start, week_end):
+        """주간 활동을 DB에서 읽어 노이즈 제거·중복 제거·정규화까지 적용해 반환.
+        report_pipeline(LangGraph)의 collect/filter 노드와 순차 경로가 공유."""
+        activities = []
         with ActivityDatabase(self.db_path) as db:
-            activities = db.get_activities_by_date_range(
-                resolved_week_start, resolved_week_end
-            )
+            activities = db.get_activities_by_date_range(week_start, week_end)
 
         activities = [a for a in activities if not self._is_noise_activity(a)]
         activities = self._dedupe_meetings(activities)
         activities = self._drop_transient_files(activities)
         activities = [self._normalize_activity_path(a) for a in activities]
+        return activities
+
+    def analyze_week_activities(self, activities):
+        """LLM/임베딩이 필요한 분석 단계 (LangGraph analyze 노드와 공유)."""
+        return {
+            "teams_my": self._summarize_my_teams_messages(activities),
+            "topics": self._cluster_topics(activities),
+        }
+
+    def compose_weekly_data(self, week_start, week_end, activities, extras=None):
+        """필터링된 활동 + 분석 결과를 보고서용 weekly_data dict로 조립."""
+        extras = extras or {}
+        teams_my = extras.get("teams_my") or {"count": 0, "summary": ""}
+        topics = extras.get("topics") or []
 
         # 파일 유형별/일별 통계도 노이즈 필터·중복제거가 적용된 동일 데이터 기준으로
         # 집계해야 총계와 맞는다 (과거엔 DB 원시값을 써서 숫자가 어긋났음)
@@ -83,7 +93,7 @@ class ReportGenerator:
             )
         ]
         daily_counts = self._build_daily_counts(
-            resolved_week_start, resolved_week_end, activities
+            week_start, week_end, activities
         )
         by_source = self._sorted_counter(
             activity.get("source", "unknown") for activity in activities
@@ -95,14 +105,12 @@ class ReportGenerator:
         ai_tool_sessions = sum(
             1 for activity in activities if activity.get("source") == "claude_code"
         )
-        teams_my = self._summarize_my_teams_messages(activities)
-        topics = self._cluster_topics(activities)
         recent_activities = activities[-20:]
         activities_by_action = self._group_activities_by_action(activities)
 
         weekly_data = {
-            "week_start": resolved_week_start,
-            "week_end": resolved_week_end,
+            "week_start": week_start,
+            "week_end": week_end,
             "has_activities": bool(activities),
             "total_activities": len(activities),
             "by_source": by_source,
@@ -128,6 +136,20 @@ class ReportGenerator:
         }
 
         return weekly_data
+
+    def collect_weekly_data(self, week_start=None, week_end=None):
+        """주간 데이터 수집 및 집계 (순차 실행 경로).
+        LangGraph 파이프라인과 동일한 단계 함수를 순서대로 호출한다."""
+        resolved_week_start, resolved_week_end = self._resolve_week_range(
+            week_start, week_end
+        )
+        activities = self.fetch_week_activities(
+            resolved_week_start, resolved_week_end
+        )
+        extras = self.analyze_week_activities(activities)
+        return self.compose_weekly_data(
+            resolved_week_start, resolved_week_end, activities, extras
+        )
 
     def generate_markdown(self, weekly_data) -> str:
         """Jinja2 템플릿으로 Markdown 문자열 생성."""
@@ -307,7 +329,20 @@ class ReportGenerator:
     def generate_and_save_weekly_report(
         self, week_start=None, week_end=None, formats=("markdown", "word")
     ) -> dict[str, object]:
-        """전체 파이프라인 실행 및 DB 요약 저장."""
+        """전체 파이프라인 실행 및 DB 요약 저장.
+        langgraph가 있으면 그래프 경로(collect→filter→analyze→aggregate→output)로
+        실행하고, 없거나 실패하면 기존 순차 경로로 폴백."""
+        try:
+            from report_pipeline import WeeklyReportPipeline
+
+            return WeeklyReportPipeline(self).run(
+                week_start=week_start, week_end=week_end, formats=formats
+            )
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"Warning: graph pipeline failed, using sequential path: {e}")
+
         weekly_data = self.collect_weekly_data(week_start=week_start, week_end=week_end)
         file_paths = self.save_report(weekly_data, formats=formats)
 

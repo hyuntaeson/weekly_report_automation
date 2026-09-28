@@ -76,7 +76,13 @@
 - LangChain 미설치 환경에서는 기존처럼 None 반환 폴백 (선택 의존성)
 - 호출자 연결: file_watcher→"file", outlook→"mail", teams 요약→"teams", 클러스터 명명→"topic"
 - 의존성 추가: langchain-core 1.6.5, langchain-openai 1.6.6
-- 잔여: ③ LangGraph 파이프라인
+### 11. AI 적용 3단계: LangGraph 보고서 파이프라인 (완료)
+- `report_pipeline.py` 신규: `collect → filter → analyze → aggregate → output` 5노드 StateGraph
+- `collect_weekly_data`를 `fetch_week_activities`/`analyze_week_activities`/`compose_weekly_data` 단계 함수로 분해 — 그래프 노드와 순차 경로가 같은 함수를 공유
+- 조건 엣지: 활동 0건이면 analyze(LLM/임베딩)를 건너뛰고 바로 집계
+- `generate_and_save_weekly_report`는 langgraph 경로 우선, ImportError/실패 시 순차 폴백
+- 검증: 실제 데이터로 그래프 실행 동일 결과(111건, 주제 10개), 통합 테스트 9/9
+- 의존성 추가: langgraph 1.2.12
 
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 
