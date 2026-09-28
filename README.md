@@ -29,6 +29,11 @@
 - [x] UI에서 감시 폴더 직접 추가/관리
 - [x] Word/PPT/Excel 파일 내용 변경분 캡처 + 사내 DRM 대응(fallback 메시지)
 - [x] 브라우저 활동 실제 수집 여부 실사용 검증 (2026-09-28 검증 완료 — 확장 설치 후 DB 기록 확인)
+- [x] AI 의미 분석: 임베딩 클러스터링으로 주간 활동을 주제 단위로 자동 분류 (주제별 작업 섹션)
+- [x] 임베딩 영속 저장: `activity_embeddings` 테이블로 벡터 누적 — 재실행 시 캐시 재사용
+- [x] 보고서 생성 LangGraph 파이프라인 (collect→filter→analyze→aggregate→output 노드화)
+- [x] 전체 기능 시나리오 테스트 32건 — Excel 결과 자동 생성 (`scenario_test.py`)
+- [x] macOS 이식 준비 — win32 가드, Outlook은 Graph 폴백으로 플랫폼 무관 수집
 - [ ] Slack Bot Token 발급 및 연동 마무리
 
 ## 🎉 최종 결과
@@ -49,6 +54,10 @@
 | 브라우저 확장 | ✅ 완료 | Chrome MV3 확장 + 로컬 서버 |
 | 통합 수집 시스템 | ✅ 완료 | 주기적 자동 수집, 스레드 기반 |
 | Modern GUI | ✅ 완료 (스켈레톤) | Flet 기반 UI, 실제 프로세스 감지로 앱 활성 상태 실시간 반영 |
+| AI 의미 분석 | ✅ 완료 | 임베딩 클러스터링 → 보고서 "주제별 작업" 섹션 (흩어진 활동을 주제로 묶음) |
+| 임베딩 캐시 | ✅ 완료 | `activity_embeddings` 테이블, 2회차 보고서 생성 시 재계산 불필요 |
+| LangGraph 파이프라인 | ✅ 완료 | 보고서 생성을 노드/엣지 그래프로 — 활동 없으면 분석 스킵 분기 |
+| macOS 이식 | ✅ 코드 준비 | win32 가드, Outlook Graph 폴백 (맥에서 실기 검증 필요) |
 
 ### 데이터 소스
 
@@ -57,12 +66,12 @@
 | 파일 시스템 | ✅ 완료 | 실시간 감시 + 텍스트 파일 내용 diff/AI 요약 |
 | VSCode | ✅ 완료 | 로그 파일 + 최근 파일 |
 | Orca IDE | ✅ 완료 | 로그 파일 |
-| Outlook | ✅ 완료 | COM API (AI 요약 포함) |
+| Outlook | ✅ 완료 | COM API (Windows) 또는 Graph 폴백 (macOS/Linux·Outlook 미실행 시) |
 | Slack | ⚙️ 설정 중 | Web API (Bot Token 필요) |
 | Claude Code | ✅ 완료 | `~/.claude/history.jsonl` + `sessions/*.json` |
 | Confluence | ✅ 완료 | REST API (PAT Bearer) + AI 요약 |
 | 브라우저 | ✅ 완료 (Chrome only) | MV3 확장 + 로컬 HTTP 서버 |
-| Teams | ✅ 완료 | 회의=Outlook 캘린더 감지, 채팅=Graph 위임권한(디바이스 로그인) |
+| Teams | ✅ 완료 | 채팅+일정=Graph 위임권한(디바이스 로그인), 1:1 대화 상대방 실명 해석 |
 
 ### 테스트 결과
 
@@ -82,12 +91,17 @@ weekly_report_automation/
 ├── ai_tool_collector.py          # AI 툴(Claude Code) 활동 수집
 ├── confluence_collector.py       # Confluence 페이지 활동 수집 (AI 요약 포함)
 ├── teams_collector.py            # Teams 활동 수집 (Graph API, config 없으면 스텁)
-├── llm_summarizer.py             # 사내 LiteLLM Proxy 기반 텍스트 요약기
+├── llm_summarizer.py             # 사내 LiteLLM Proxy 기반 텍스트 요약기 (LCEL 체인)
+├── activity_clusterer.py         # 임베딩 의미 클러스터링 → 보고서 "주제별 작업"
+├── report_pipeline.py            # 보고서 생성 LangGraph 파이프라인
 ├── report_generator.py           # 주간보고서 생성 (Markdown+Word, 액션별 상세 내역)
 ├── browser_activity_server.py    # 브라우저 확장 수신용 로컬 HTTP 서버
 ├── integrated_collector.py       # 통합 수집 시스템
-├── test_all_completed.py         # 통합 테스트 프로그램
+├── test_all_completed.py         # 통합 테스트 프로그램 (9개 기능)
+├── scenario_test.py              # 전체 기능 시나리오 테스트 (32건 → Excel 결과)
+├── cleanup_data.py               # data/ 테스트 산출물 정리 유틸리티
 ├── check_database.py             # 데이터베이스 확인 프로그램
+├── weekly_report_automation_overview.html  # Spharos 스타일 프로젝트 개요 보고서
 ├── requirements.txt              # 필요한 라이브러리
 ├── run_modern_gui.bat            # Modern UI 실행 스크립트
 ├── run_gui.bat                   # Classic UI 실행 스크립트
@@ -106,6 +120,7 @@ weekly_report_automation/
 │   ├── confluence_config.json    # Confluence 설정 파일 (토큰 포함, gitignore 처리됨)
 │   └── litellm_config.json       # 사내 LiteLLM Proxy 설정 (API 키 포함, gitignore 처리됨)
 ├── reports/                      # 생성된 주간보고서 저장 위치
+├── test_reports/                 # 시나리오 테스트 결과 (Excel, gitignore 처리됨)
 ├── logs/                         # 로그 파일 저장소
 ├── data/                         # 데이터베이스 및 JSON 파일 저장소
 ├── README.md                     # 이 파일
@@ -166,6 +181,9 @@ python test_all_completed.py
 ### file_stats 테이블
 - 파일 타입별 통계 데이터
 
+### activity_embeddings 테이블
+- 활동별 임베딩 벡터 저장 (의미 클러스터링·유사 과거 작업 검색용, JSON 벡터)
+
 ## 👥 다른 사용자에게 배포할 때
 
 각 사용자가 본인 PC에서 1회만 수행하면 되는 설정:
@@ -176,6 +194,8 @@ python test_all_completed.py
 4. `config/watch_config.json`의 `watch_paths`를 본인 작업 폴더로 수정
 5. Slack/Confluence/LiteLLM을 쓰려면 각각 `config/*_config.json`에 본인 토큰 발급
 
+**macOS/Linux도 동작**: pywin32는 자동으로 스킵되고, Outlook 대신 Teams 토큰으로 Graph 메일 수집, GUI는 프로세스 존재 기반으로 앱 활성 상태 감지
+
 **주의**: 토큰 파일(`config/teams_graph_token.json`, `config/*_config.json`)은 개인 인증정보이므로 공유/커밋 금지 — `.gitignore`로 이미 제외되어 있음. 토큰은 Azure 앱 등록 없이 Microsoft Office first-party client의 위임 권한으로 발급되며, 각자 본인 데이터만 조회 가능
 
 ## ⚠️ 주의사항
@@ -184,7 +204,7 @@ python test_all_completed.py
 - 로그 파일은 감시 대상에서 제외됩니다
 - 대용량 폴더 감시 시 성능에 영향을 줄 수 있습니다
 - 개인정보가 포함된 파일 경로가 저장될 수 있으니 주의 필요
-- Outlook API 수집은 Outlook이 설치되어 있어야 하며 실행 중이어야 합니다
+- Outlook 수집은 Windows에선 Outlook 실행이 필요하지만, 미실행 또는 macOS에서는 Graph로 자동 폴백됩니다 (Teams 로그인 토큰 재사용)
 - IDE 수집은 해당 IDE가 설치되어 있어야 합니다
 - Confluence 토큰 등 민감정보는 `config/*.json`에만 저장하고 `.gitignore`로 커밋 방지
 
@@ -201,7 +221,9 @@ python test_all_completed.py
 - **python-docx**: Word 문서 생성 (내장 템플릿 미사용, 자체 minimal docx 빌더 사용)
 - **requests**: Confluence REST API 호출, 사내 LiteLLM Proxy 호출
 - **psutil**: 실제 프로세스 실행 여부 감지 (Active Work Sessions)
-- **사내 LiteLLM Proxy**: Outlook/Confluence 내용 AI 요약 (모델: claude-haiku-4-5)
+- **사내 LiteLLM Proxy**: Outlook/Confluence 내용 AI 요약 (모델: claude-haiku-4-5), `text-embedding-3-large` 임베딩
+- **LangChain (LCEL)**: LLM 호출 체인 표준화 — 소스별 프롬프트 템플릿, 재시도 내장
+- **LangGraph**: 보고서 생성 파이프라인을 상태 그래프로 노드화
 
 ## 📞 추가 정보
 
