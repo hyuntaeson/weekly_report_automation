@@ -12,3 +12,6 @@ config/teams_config.json
 config/teams_graph_token.json
 .env
 *.key
+
+# 테스트 결과 산출물
+test_reports/
