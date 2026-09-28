@@ -103,6 +103,11 @@
   - `cleanup_data.py` 신규: data/ 테스트 산출물 정리 유틸 (dry-run 기본, --yes로 실행)
 - 테스트 결과: PASS 31 / FAIL 0 / SKIP 1 (브라우저 서버는 트래킹 OFF라 정상 SKIP)
 
+### 14. Teams 1:1 채팅 상대방 이름 해석 강화 (완료)
+- 해석 체인 확장: 멤버 목록 → 최근 메시지 발신자 → **과거 메시지 히스토리 페이징(최대 300건)** → **chat id GUID를 /me/people 주소록과 매칭**
+- 봇/알림 채팅 처리: `from.application.displayName`도 상대방으로 인식 → "봇 - 아이앤씨 알림" 등으로 표기
+- 결과: 14개 중 12개 실명 해석. 미해결 2개는 사람이 아닌 채팅 — 시스템 메시지 1건뿐이거나 메시지 0건의 빈 채팅이라 해석 불가 ("1:1 - (상대방 정보 없음)" 표기)
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)
@@ -119,7 +124,9 @@
 5. **Slack 연동 마무리** — Bot Token 발급 필요 (사용자가 보류, 천천히 진행 예정)
 6. ~~**Teams 연동**~~ ✅ **완료 (2026-09-28)** — 회의는 캘린더 경유 감지, 채팅은 디바이스 코드 로그인 기반 Graph 직접 수집으로 350건 DB 저장 확인
 7. **UI 최종 마무리** — 지금은 스켈레톤 상태. Slack/Teams까지 다 붙은 뒤 한 번에 정리하기로 함
-8. **임베딩 영속 저장(VectorDB)** — `activity_embeddings` SQLite 테이블로 활동 벡터를 누적해 "지난주 유사 작업" 검색 기반 마련 (현재는 보고서 생성 시점에 인메모리 계산 후 폐기)
+8. ~~**임베딩 영속 저장(VectorDB)**~~ ✅ **완료 (2026-09-28)** — `activity_embeddings` 테이블 + 캐시 재사용 구현. 2회차 실행 22.6s→3.3s. 향후 "유사 과거 작업" 검색용 RAG 기반 확보
+9. **RAG 의미 질의 섹션** — 미리 정의한 질의("장애 대응", "문서 작업" 등)로 누적 임베딩에서 관련 활동만 검색 → LLM 요약해 보고서 섹션 생성 (임베딩 저장은 완료됨)
+10. **macOS 실기 검증** — 코드 가드/폴백은 완료, 맥에서 GUI 기동·Graph 로그인·Outlook 수집 확인 필요
 
 ### 낮은 우선순위
 9. **데이터 정리 스크립트** — `data/` 폴더에 테스트 산출물(`activities_*.json`, `test_results_*.json` 등) 누적 중
