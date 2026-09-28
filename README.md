@@ -15,6 +15,7 @@
 - AI 툴 (Claude Code)
 - Confluence (페이지 생성/수정)
 - 브라우저 (Chrome 방문 기록)
+- Teams (회의 + 채팅 메시지)
 
 ## ✅ 완료 기준
 
@@ -61,7 +62,7 @@
 | Claude Code | ✅ 완료 | `~/.claude/history.jsonl` + `sessions/*.json` |
 | Confluence | ✅ 완료 | REST API (PAT Bearer) + AI 요약 |
 | 브라우저 | ✅ 완료 (Chrome only) | MV3 확장 + 로컬 HTTP 서버 |
-| Teams | ⚙️ 부분 완료 | 회의=Outlook 캘린더 경유 감지. 채팅=Graph API 스텁(자격증명 대기) |
+| Teams | ✅ 완료 | 회의=Outlook 캘린더 감지, 채팅=Graph 위임권한(디바이스 로그인) |
 
 ### 테스트 결과
 

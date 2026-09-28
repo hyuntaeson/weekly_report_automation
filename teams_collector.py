@@ -1,203 +1,220 @@
 #!/usr/bin/env python3
 """
 Microsoft Teams Activity Collector
-Collects chat/channel activity via Microsoft Graph API.
+Microsoft Graph API (위임 권한, 디바이스 코드 로그인)로 본인 Teams 채팅 수집.
 
-사내 Azure AD 앱 등록이 막혀 있으면 config를 만들 수 없으므로
-현재는 스텁 상태로 동작한다 (Devin 스텁과 같은 패턴):
-config/teams_config.json 이 없거나 enabled=false이면 빈 리스트 반환.
+배경:
+- 사내 DevX MCP(sm-ops-pub-mcp)에도 Teams 조회 도구가 있지만, 그 MCP의 토큰 캐시가
+  로컬 Qdrant(localhost:6333)를 요구해서 이 환경에서는 동작하지 않음 (2026-09-28 확인).
+- 대신 같은 방식의 위임 권한 로그인을 직접 구현: Microsoft Office first-party
+  client_id + `.default` scope로 디바이스 코드 로그인 → 토큰을 로컬 파일에 저장 →
+  refresh_token으로 자동 갱신. Azure AD 앱 등록 불필요.
 
-자격증명이 확보되면 아래 형식의 config/teams_config.json을 만들면
-별도 코드 수정 없이 바로 수집이 시작된다:
-
-    {
-        "enabled": true,
-        "tenant_id": "...",
-        "client_id": "...",
-        "client_secret": "...",
-        "user_id": "me 또는 user@domain"  // /me는 delegated 전용, client_credentials는 UPN
-    }
-
-필요 권한 (application permission, 관리자 동의 필요):
-    - ChannelMessage.Read.All  (채널 메시지)
-    - Chat.Read.All            (1:1/그룹 채팅)
-    - Team.ReadBasic.All       (팀 목록)
+토큰 파일: config/teams_graph_token.json (access+refresh token 포함, gitignore 필수)
+최초 1회 로그인: `python teams_collector.py --login` 실행 후 안내 코드 입력.
 """
 
+import argparse
 import json
 import os
-from datetime import datetime, timedelta
-
-import requests
+import re
+import sys
+import time
+import urllib.parse
+import urllib.request
+import urllib.error
+from datetime import datetime, timedelta, timezone
 
 from database import ActivityDatabase
 
+TENANT = "shinsegaegroup.onmicrosoft.com"
+# Microsoft Office first-party client (DevX MCP와 동일한 client 사용).
+# 사내 전역 admin consent가 이미 적용된 상태라 별도 Azure AD 앱 등록 불필요.
+CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+SCOPE = "https://graph.microsoft.com/.default offline_access"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+TOKEN_FILE = "config/teams_graph_token.json"
 
+
+# ---------- HTTP 헬퍼 ----------
+
+def _post_form(url, data):
+    req = urllib.request.Request(
+        url,
+        data=urllib.parse.urlencode(data).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    return json.loads(urllib.request.urlopen(req, timeout=30).read())
+
+
+def _graph_get(access_token, path, params=None):
+    url = GRAPH_BASE + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {access_token}"}
+    )
+    return json.loads(urllib.request.urlopen(req, timeout=30).read())
+
+
+# ---------- 토큰 관리 ----------
+
+def device_code_login(token_file=TOKEN_FILE):
+    """디바이스 코드 로그인 대화형 실행. 완료 시 토큰을 token_file에 저장."""
+    dc = _post_form(
+        f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/devicecode",
+        {"client_id": CLIENT_ID, "scope": SCOPE},
+    )
+    print(dc["message"], flush=True)
+
+    interval = dc.get("interval", 5)
+    deadline = time.time() + dc.get("expires_in", 900)
+    while time.time() < deadline:
+        time.sleep(interval)
+        try:
+            token = _post_form(
+                f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token",
+                {
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "client_id": CLIENT_ID,
+                    "device_code": dc["device_code"],
+                },
+            )
+        except urllib.error.HTTPError as e:
+            err = json.loads(e.read())
+            if err.get("error") == "authorization_pending":
+                continue
+            raise RuntimeError(f"login failed: {err}")
+        token["saved_at"] = time.time()
+        with open(token_file, "w", encoding="utf-8") as f:
+            json.dump(token, f, indent=2)
+        print(f"Token saved to {token_file}", flush=True)
+        return token
+    raise RuntimeError("device code expired")
+
+
+def _is_expired(token):
+    saved = token.get("saved_at", 0)
+    return time.time() > saved + int(token.get("expires_in", 3600)) - 120
+
+
+def get_access_token(token_file=TOKEN_FILE):
+    """저장된 토큰 로드. 만료 시 refresh_token으로 갱신. 없으면 None."""
+    if not os.path.exists(token_file):
+        return None
+    try:
+        with open(token_file, encoding="utf-8") as f:
+            token = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not _is_expired(token):
+        return token.get("access_token")
+
+    refresh = token.get("refresh_token")
+    if not refresh:
+        return None
+    try:
+        new_token = _post_form(
+            f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token",
+            {
+                "grant_type": "refresh_token",
+                "client_id": CLIENT_ID,
+                "refresh_token": refresh,
+                "scope": SCOPE,
+            },
+        )
+    except urllib.error.HTTPError as e:
+        print(f"Warning: token refresh failed: {e}")
+        return None
+    new_token["saved_at"] = time.time()
+    if "refresh_token" not in new_token and refresh:
+        new_token["refresh_token"] = refresh
+    with open(token_file, "w", encoding="utf-8") as f:
+        json.dump(new_token, f, indent=2)
+    return new_token.get("access_token")
+
+
+# ---------- 수집 ----------
 
 class TeamsCollector:
-    """Microsoft Graph 기반 Teams 활동 수집기 (미설정 시 스텁)"""
+    """Microsoft Graph 기반 Teams 활동 수집기 (위임 권한)"""
 
-    def __init__(self, db_path="data/activities.db", config_path="config/teams_config.json"):
+    def __init__(self, db_path="data/activities.db", token_file=TOKEN_FILE):
         self.db_path = db_path
-        self.config = self._load_config(config_path)
-        self.enabled = bool(self.config.get("enabled"))
-        self._access_token = None
-        self._token_expires = None
+        self.token_file = token_file
+        self._token = None
 
-    def _load_config(self, config_path):
-        if not os.path.exists(config_path):
-            return {"enabled": False}
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            print(f"Warning: Failed to load Teams config: {e}")
-            return {"enabled": False}
-
-    # ---------- 인증 ----------
-
-    def _acquire_token(self):
-        """client_credentials 플로우로 액세스 토큰 발급 (application permission용)"""
-        if self._access_token and self._token_expires and datetime.now() < self._token_expires:
-            return self._access_token
-
-        resp = requests.post(
-            TOKEN_URL.format(tenant=self.config["tenant_id"]),
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.config["client_id"],
-                "client_secret": self.config["client_secret"],
-                "scope": "https://graph.microsoft.com/.default",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        self._access_token = payload["access_token"]
-        self._token_expires = datetime.now() + timedelta(
-            seconds=int(payload.get("expires_in", 3600)) - 60
-        )
-        return self._access_token
-
-    def _graph_get(self, path, params=None):
-        token = self._acquire_token()
-        resp = requests.get(
-            f"{GRAPH_BASE}{path}",
-            headers={"Authorization": f"Bearer {token}"},
-            params=params or {},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    # ---------- 수집 ----------
+    @property
+    def enabled(self):
+        return os.path.exists(self.token_file)
 
     def collect_all_teams_activity(self, days=7):
-        """Teams 채널/채팅 활동 수집. 미설정 상태면 빈 리스트(스텁)."""
-        if not self.enabled:
+        """본인 Teams 채팅방의 최근 메시지 수집. 토큰 없으면 빈 리스트."""
+        access_token = self._token or get_access_token(self.token_file)
+        if not access_token:
             return []
+        self._token = access_token
+
+        since = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         activities = []
         try:
-            activities.extend(self._collect_channel_messages(days))
-            activities.extend(self._collect_chat_messages(days))
-        except Exception as e:
-            print(f"Error collecting Teams activity: {e}")
-        return activities
-
-    def _collect_channel_messages(self, days):
-        """참여 중인 팀의 채널 메시지 수집 (application permission 필요)"""
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat() + "Z"
-        activities = []
-
-        user_id = self.config.get("user_id", "me")
-        teams = self._graph_get(f"/users/{user_id}/joinedTeams").get("value", [])
-
-        for team in teams:
-            try:
-                channels = self._graph_get(
-                    f"/teams/{team['id']}/channels"
-                ).get("value", [])
-            except Exception:
-                continue
-
-            for channel in channels:
-                try:
-                    messages = self._graph_get(
-                        f"/teams/{team['id']}/channels/{channel['id']}/messages",
-                        params={"$top": 50},
-                    ).get("value", [])
-                except Exception:
-                    continue
-
-                for msg in messages:
-                    created = msg.get("createdDateTime", "")
-                    if created < since:
-                        continue
-                    activities.append(self._message_to_activity(
-                        msg, f"Teams 채널: {team.get('displayName')} / {channel.get('displayName')}"
-                    ))
-        return [a for a in activities if a]
-
-    def _collect_chat_messages(self, days):
-        """1:1/그룹 채팅 메시지 수집 (application permission 필요)"""
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat() + "Z"
-        activities = []
-
-        try:
-            chats = self._graph_get(
-                f"/users/{self.config.get('user_id', 'me')}/chats",
-                params={"$top": 50},
-            ).get("value", [])
+            chats = _graph_get(access_token, "/me/chats", {"$top": 50}).get("value", [])
         except Exception as e:
             print(f"Error listing Teams chats: {e}")
             return []
 
         for chat in chats:
+            chat_id = chat.get("id")
+            title = chat.get("topic") or chat.get("chatType") or "chat"
             try:
-                messages = self._graph_get(
-                    f"/chats/{chat['id']}/messages",
-                    params={"$top": 50},
+                messages = _graph_get(
+                    access_token,
+                    f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
+                    {"$top": 50},
                 ).get("value", [])
-            except Exception:
+            except Exception as e:
+                print(f"Error reading messages for chat {title}: {e}")
                 continue
 
             for msg in messages:
                 created = msg.get("createdDateTime", "")
                 if created < since:
                     continue
-                activities.append(self._message_to_activity(
-                    msg, f"Teams 채팅: {chat.get('topic') or chat.get('chatType')}"
-                ))
-        return [a for a in activities if a]
+                activity = self._message_to_activity(msg, title)
+                if activity:
+                    activities.append(activity)
 
-    def _message_to_activity(self, msg, context):
+        return activities
+
+    def _message_to_activity(self, msg, chat_title):
         """Graph message 객체를 activities 테이블 포맷으로 변환"""
-        body = (msg.get("body") or {}).get("content") or ""
-        # HTML 태그 대충 제거 (메시지 본문은 contentType=text/html인 경우가 많음)
-        import re
-        body_text = re.sub(r"<[^>]+>", " ", body).strip()
-
         sender = ((msg.get("from") or {}).get("user") or {}).get("displayName") or "Unknown"
+        body_html = (msg.get("body") or {}).get("content") or ""
+        text = re.sub(r"<[^>]+>", " ", body_html)
+        text = " ".join(text.split())
+        if not sender and not text:
+            return None
 
         return {
             "timestamp": msg.get("createdDateTime", datetime.now().isoformat()),
             "action": "message",
-            "file_path": f"{context} - {sender}",
+            "file_path": f"Teams 채팅: {chat_title} - {sender}",
             "file_type": "teams_message",
             "source": "teams",
             "details": json.dumps(
                 {
+                    "chat": chat_title,
                     "sender": sender,
-                    "context": context,
-                    "text": body_text[:200],
+                    "text": text[:300],
                     "message_type": msg.get("messageType"),
                 },
                 ensure_ascii=False,
             ),
-        } if sender or body_text else None
+        }
 
     def save_to_database(self, activities):
         """수집 결과를 DB에 저장"""
@@ -208,11 +225,32 @@ class TeamsCollector:
 
 
 def main():
-    """테스트 실행"""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    parser = argparse.ArgumentParser(description="Teams activity collector")
+    parser.add_argument(
+        "--login",
+        action="store_true",
+        help="디바이스 코드 로그인 실행 (최초 1회 또는 토큰 만료 시)",
+    )
+    parser.add_argument("--days", type=int, default=7)
+    args = parser.parse_args()
+
+    if args.login:
+        device_code_login()
+        return
+
     collector = TeamsCollector()
-    print(f"Teams collector enabled: {collector.enabled}")
-    activities = collector.collect_all_teams_activity(days=7)
+    if not collector.enabled:
+        print("No token file. Run: python teams_collector.py --login")
+        return
+
+    activities = collector.collect_all_teams_activity(days=args.days)
     print(f"Collected {len(activities)} Teams activities")
+    for a in activities[:10]:
+        print(f"  {a['timestamp']} | {a['file_path']}")
 
 
 if __name__ == "__main__":

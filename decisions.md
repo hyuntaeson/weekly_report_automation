@@ -234,15 +234,16 @@
 - DB에 `source='browser'` 행이 한 번도 기록된 적 없어 조사한 결과, GUI의 "Start Tracking" 버튼은 파일 감시만 시작하고 크롬 확장이 POST하는 로컬 서버(포트 5757)는 켜지 않고 있었음 (별도 스크립트 `integrated_collector.py`를 실행해야만 켜지는 구조였음)
 - 사용자가 GUI 버튼으로만 트래킹을 시작/종료하는 워크플로우를 쓰고 있어서, GUI 경로에서도 브라우저 서버가 자동으로 켜지도록 통일
 
-### 27. Teams 연동: Outlook 캘린더 경유 회의 감지 + Graph API 스텁
+### 27. Teams 연동: 디바이스 코드 로그인(위임 권한) + Graph 직접 호출
 
-**결정**: Teams 채팅/채널 수집은 `teams_collector.py`를 Graph API 기반 스텁으로 구현(`config/teams_config.json` 없으면 빈 리스트). 대신 Teams **회의**는 Outlook 캘린더 수집에서 감지해서 `is_teams_meeting` 플래그로 구분 (Location/본문의 `teams.microsoft.com`, `teams.live.com`, "Microsoft Teams Meeting" 마커 기준)
+**결정**: `teams_collector.py`가 Microsoft Graph `/me/chats`, `/me/chats/{id}/messages`를 직접 호출해 본인 Teams 채팅을 수집. 인증은 Microsoft Office first-party client(`d3590ed6-52b3-4102-aeff-aad2292ab01c`)+`.default offline_access` scope의 디바이스 코드 로그인으로, 토큰은 `config/teams_graph_token.json`에 저장하고 `refresh_token`으로 자동 갱신. Teams **회의**는 Outlook 캘린더 수집에서 `is_teams_meeting` 플래그로 구분
 
 **이유**:
-- 사내 정책상 Azure AD 앱 등록이 막혀 있을 수 있어 Graph API 자격증명 확보가 불확실 (2026-09-28 사용자 확인)
-- Teams 로컬 캐시(IndexedDB)는 암호화되어 파싱 불가, 로그는 진단용이라 채팅 내용 없음 → Graph 없이 채팅 수집은 사실상 불가
-- 반면 Teams 회의는 Outlook 캘린더에 Teams 링크가 포함된 채로 이미 수집되고 있어서, 감지 로직만 추가하면 자격증명 없이 "Teams 회의 참석" 활동을 별도 구분 가능
-- 자격증명이 확보되면 `teams_collector.py`에 client_credentials 플로우가 이미 구현되어 있어 config 파일 생성만으로 동작
+- 사내 정책상 Azure AD 앱 등록이 막혀 있을 수 있어 client_credentials 앱 권한 경로는 불가 (2026-09-28 사용자 확인)
+- 사내 DevX MCP(`sm-ops-pub-mcp`)에도 Teams 조회 도구가 있었으나, 그 MCP의 토큰 캐시가 로컬 Qdrant(localhost:6333)를 요구해서 이 환경에서는 `fetch failed`로 동작 불가 — 단, 그 MCP가 쓰는 first-party client 방식은 확인됐으므로 동일 방식을 Python으로 직접 구현
+- `.default` scope는 사내 전역 admin consent가 이미 적용된 권한만 포함 → 권한 이름을 명시하면 `AADSTS65002`가 나는 사내 환경에서 유일하게 동작하는 방식 (DevX MCP 코드 주석에서 확인)
+- delegated permission이라 본인 채팅만 조회 가능 (주간보고 용도로 적절)
+- 토큰 파일은 access+refresh token을 포함하므로 `.gitignore` 필수 처리
 
 ## ❌ 폐기된 결정
 

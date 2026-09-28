@@ -8,5 +8,7 @@ test_reports/
 config/slack_config.json
 config/confluence_config.json
 config/litellm_config.json
+config/teams_config.json
+config/teams_graph_token.json
 .env
 *.key

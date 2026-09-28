@@ -36,11 +36,12 @@
 - **FileWatcher 스레드 누수 수정**: `start()`의 `while True: sleep(1)` 루프가 `stop_tracking()` 이후에도 계속 살아있어 재시작 때마다 스레드가 누적되던 문제 → `_running` 플래그로 종료되도록 수정 (daemon 스레드라 실해는 없었지만 클린업 목적)
 - **검증**: 별도 스크립트로 `~$report.docx`/`plain.tmp` 필터링 및 stop() 후 스레드 종료 확인, `test_all_completed.py` 9/9 재통과
 
-### 5. Teams 연동 1단계: 캘린더 경유 회의 감지 + Graph 스텁
-- **배경**: 사내 정책상 Azure AD 앱 등록이 막혀있을 수 있어 Graph 자격증명 확보 불확실 → 자격증명 없이 가능한 범위로 구현
-- `outlook_collector.py`: 캘린더 수집 시 `Location`/본문의 Teams 링크(`teams.microsoft.com` 등) 감지 → `details.is_teams_meeting` 플래그 + file_path가 "Teams Meeting: {제목}"으로 표시됨
-- `teams_collector.py` 신규: Graph API(client_credentials) 기반 채널/채팅 수집 코드 완성, `config/teams_config.json` 없으면 빈 리스트 반환하는 스텁(Devin 패턴). 자격증명 확보 시 config만 만들면 바로 동작
-- `integrated_collector.py`: Teams 수집 루프(30분 주기) 추가 + 기존 `stop()`의 `file_watcher.stop()` 중복 호출 버그 정리
+### 5. Teams 연동 완료: 캘린더 회의 감지 + 채팅 수집 (실제 동작 확인)
+- **Teams 회의**: `outlook_collector.py` 캘린더 수집 시 `Location`/본문의 Teams 링크(`teams.microsoft.com` 등) 감지 → `details.is_teams_meeting` 플래그 + file_path "Teams Meeting: {제목}"
+- **Teams 채팅**: `teams_collector.py` — 사내 DevX MCP 경유를 시도했으나 그 MCP의 토큰 캐시가 로컬 Qdrant를 요구해 불가 → Microsoft Office first-party client + 디바이스 코드 로그인을 Python으로 직접 구현. 토큰은 `config/teams_graph_token.json`에 저장(gitignore), refresh_token 자동 갱신
+- **검증 완료**: 디바이스 코드 로그인 후 `/me/chats` 9개 채팅방 조회, 최근 7일 메시지 350건 수집·DB 저장 확인 (`source='teams'`)
+- `integrated_collector.py`: Teams 수집 루프(30분 주기) 연결 + 기존 `stop()`의 `file_watcher.stop()` 중복 호출 버그 정리
+- 최초 로그인/재로그인: `python teams_collector.py --login`
 
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
@@ -56,7 +57,7 @@
 3. **Git 버전관리 시작** — `weekly_report_automation` 폴더가 아직 git 저장소 아님. `.gitignore`는 준비됨(`config/*_config.json`, `data/`, `reports/`, `logs/` 등 제외)
 4. **자동 스케줄링** — Windows Task Scheduler로 "매주 자동 생성" 목표 완성
 5. **Slack 연동 마무리** — Bot Token 발급 필요 (사용자가 보류, 천천히 진행 예정)
-6. **Teams 연동** — 1단계 완료(캘린더 경유 회의 감지 + Graph 스텁). 채팅/채널 수집은 Azure AD 앱 자격증명 확보 시 `config/teams_config.json` 생성으로 활성화
+6. ~~**Teams 연동**~~ ✅ **완료 (2026-09-28)** — 회의는 캘린더 경유 감지, 채팅은 디바이스 코드 로그인 기반 Graph 직접 수집으로 350건 DB 저장 확인
 7. **UI 최종 마무리** — 지금은 스켈레톤 상태. Slack/Teams까지 다 붙은 뒤 한 번에 정리하기로 함
 
 ### 낮은 우선순위
