@@ -290,6 +290,32 @@
 - macOS에서 Outlook 대체가 필요했는데, Teams 인증 토큰으로 `/me/mailFolders/{Inbox,SentItems}`가 이미 동작 — 새 인증 경로를 만들 필요가 없어 이중 구현 부담이 사라짐
 - `pywin32`를 `sys_platform == 'win32'` 조건부로 설치해 macOS pip 설치 오류 방지
 
+### 33. 임베딩 영속화: SQLite `activity_embeddings` 테이블
+
+**결정**: 활동별 임베딩 벡터를 `activity_embeddings(activity_key, text, vector)` 테이블에 누적 저장하고, 클러스터러는 캐시 히트된 벡터를 재계산하지 않는다.
+
+**이유**:
+- 보고서 생성 시마다 임베딩 API를 재호출하던 것이 측정상 22.6s→3.3s로 개선됨
+- 누적 벡터가 곧 VectorDB 역할 — "지난주 유사 작업" 검색(RAG) 기반이 됨
+- 외부 VectorDB(FAISS/Qdrant) 설치 없이 SQLite 하나로 영속성 확보 (29번 결정의 확장)
+
+### 34. Teams 1:1 상대방 이름 해석: 다단계 체인 + 봇 인식
+
+**결정**: `_chat_title`에서 다음 순서로 상대방 이름을 찾는다: 멤버 목록 → 최근 메시지 발신자 → 과거 히스토리(최대 300건 페이징) → chat id GUID를 `/me/people` 주소록과 매칭. 봇 채팅은 `from.application.displayName`으로 "봇 - 이름" 표기. 전부 실패 시 "1:1 - (상대방 정보 없음)".
+
+**이유**:
+- `/users/{guid}`는 사내 권한(User.Read.All) 부재로 404 — `/me/people`은 내 주소록이라 권한 추가 없이 동작
+- 미해결 채팅 중 상당수는 사람이 아닌 앱/봇(예: "아이앤씨 알림") — `from.application.displayName`으로 의미 있는 표기 확보
+- 결과: 14개 1:1 채팅 중 12개 실명/봇명 해석, 나머지 2개는 메시지 0~1건의 해석 불가능한 채팅
+
+### 35. Graph API 429 대응: Retry-After 기반 백오프
+
+**결정**: `_graph_get`이 429(Too Many Requests)를 받으면 `Retry-After` 헤더(없으면 지수 백오프)만큼 대기 후 최대 3회 재시도. `@odata.nextLink` 전체 URL도 그대로 받아 페이징 가능.
+
+**이유**:
+- 채팅 목록 순회 시 멤버/메시지 호출이 연속돼 429가 실제로 관측됨 — 무재시도면 해당 채팅 수집이 빠짐
+- 429만 재시도하고 다른 에러는 즉시 raise — 무한 재시도로 인한 지연 방지
+
 ## ❌ 폐기된 결정
 
 ### 1. 보고서 포맷: PDF/HTML 포함
