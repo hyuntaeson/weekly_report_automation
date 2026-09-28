@@ -1,0 +1,17 @@
+try {
+  const theme = localStorage.getItem("IDEOGRAM_APP_THEME_MODE");
+  if (theme === "light" || theme === "dark") {
+    document.documentElement.style.setProperty(
+      "--bootstrap-color-scheme",
+      theme,
+    );
+  }
+} catch {
+  // Unavailable storage falls back to the system theme.
+}
+document
+  .querySelector('meta[name="theme-color"]')
+  .setAttribute(
+    "content",
+    getComputedStyle(document.documentElement).backgroundColor,
+  );

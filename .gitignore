@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+data/
+logs/
+*.log
+reports/
+test_reports/
+config/slack_config.json
+config/confluence_config.json
+config/litellm_config.json
+.env
+*.key

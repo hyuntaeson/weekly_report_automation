@@ -1,0 +1,1060 @@
+#!/usr/bin/env python3
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false, reportOptionalMemberAccess=false
+"""
+Modern WeeklyPulse-style GUI using Flet
+Improved layout and sizing based on reference image
+"""
+
+import flet as ft
+import json
+import os
+import threading
+import time
+import psutil
+import win32gui
+import win32process
+from datetime import datetime, timedelta
+from file_watcher import FileWatcher, FileActivityHandler
+from ide_collector import IDECollector, RecentFileCollector
+from outlook_collector import OutlookCollector, OutlookLogCollector
+from slack_collector import SlackCollector
+from confluence_collector import ConfluenceCollector
+from report_generator import ReportGenerator
+from database import ActivityDatabase
+from browser_activity_server import BrowserActivityServer
+
+
+class WeeklyPulseApp:
+    """Modern WeeklyPulse-style application with proper sizing"""
+
+    # 실제 실행 여부를 확인할 프로세스 이름 (Confluence는 웹 기반이라 별도 실행파일이 없음)
+    PROCESS_NAMES = {
+        "Slack": ["slack.exe"],
+        "Excel": ["excel.exe"],
+        "PowerPoint": ["powerpnt.exe"],
+        "Notepad": ["notepad.exe"],
+        "Chrome": ["chrome.exe"],
+        "Claude Code": ["claude.exe"],
+        "Devin": ["devin.exe"],
+    }
+
+    def is_app_running(self, process_names):
+        """지정된 프로세스 이름 중 하나가, 눈에 보이는 창을 가지고 실행 중인지 확인.
+
+        단순 프로세스 존재 여부(psutil)만 보면 Slack 같은 Electron 앱은 창을
+        닫아도 백그라운드 헬퍼 프로세스가 남아있어 항상 "실행 중"으로 오판됨.
+        그래서 실제로 IsWindowVisible + 제목이 있는 창을 가진 프로세스인지까지 확인.
+        """
+        if not process_names:
+            return False
+        target = {name.lower() for name in process_names}
+
+        target_pids = set()
+        try:
+            for proc in psutil.process_iter(["pid", "name"]):
+                if (proc.info.get("name") or "").lower() in target:
+                    target_pids.add(proc.info["pid"])
+        except Exception:
+            return False
+
+        if not target_pids:
+            return False
+
+        found = {"visible": False}
+
+        def _enum_callback(hwnd, _):
+            if found["visible"] or not win32gui.IsWindowVisible(hwnd):
+                return
+            if not win32gui.GetWindowText(hwnd):
+                return
+            try:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            except Exception:
+                return
+            if pid in target_pids:
+                found["visible"] = True
+
+        try:
+            win32gui.EnumWindows(_enum_callback, None)
+        except Exception:
+            # EnumWindows 자체가 실패하면 프로세스 존재 여부로 폴백
+            return True
+
+        return found["visible"]
+
+    def __init__(self, page: ft.Page):
+        self.page = page
+        self.page.title = "WeeklyPulse"
+        self.page.theme_mode = ft.ThemeMode.LIGHT
+        self.page.window.width = 1400
+        self.page.window.height = 900
+        self.page.window.min_width = 1200
+        self.page.window.min_height = 800
+        self.page.padding = 0
+        self.page.bgcolor = ft.Colors.WHITE
+
+        # App state
+        self.is_running = False
+        self.file_watcher = None
+        self.watcher_thread = None
+        self.browser_server = None
+        self.collected_activities = []
+
+        # Tracked apps data - "active"는 실제 프로세스 실행 여부를 확인해서 채움
+        self.tracked_apps = {
+            "Slack": {"icon": ft.Icons.CHAT, "last_active": "30 min ago"},
+            "Excel": {"icon": ft.Icons.TABLE_VIEW, "last_active": "1 hour ago"},
+            "PowerPoint": {"icon": ft.Icons.SLIDESHOW, "last_active": "2 hours ago"},
+            "Confluence": {"icon": ft.Icons.ARTICLE, "last_active": "45 min ago"},
+            "Notepad": {"icon": ft.Icons.EDIT, "last_active": "15 min ago"},
+            "Chrome": {"icon": ft.Icons.LANGUAGE, "last_active": "now"},
+            "Claude Code": {"icon": ft.Icons.PSYCHOLOGY, "last_active": "5 min ago"},
+            "Devin": {"icon": ft.Icons.SMART_TOY, "last_active": "10 min ago"},
+        }
+        for app_name, app_data in self.tracked_apps.items():
+            app_data["active"] = self.is_app_running(
+                self.PROCESS_NAMES.get(app_name, [])
+            )
+
+        # Statistics
+        self.total_hours = 38.5
+        self.active_tools = 8
+        self.most_used = "Chrome"
+
+        # UI references
+        self.tracking_button_ref = None
+        self.nav_items = {}
+        self.app_card_refs = {}
+        self.status_refresh_thread = None
+        self.main_content_column = None
+        self.watch_folder_list_ref = None
+        self.watch_config_path = "config/watch_config.json"
+
+    def start_status_refresh_loop(self, interval_seconds=5):
+        """백그라운드에서 주기적으로 실제 프로세스 실행 여부를 다시 확인해서
+        Active Work Sessions 카드에 반영 (앱 실행 중 Slack 등을 껐다 켜도 반영되도록)"""
+        if self.status_refresh_thread is not None:
+            return
+
+        def loop():
+            while True:
+                time.sleep(interval_seconds)
+                try:
+                    self.refresh_app_statuses()
+                except Exception as ex:
+                    print(f"Error refreshing app statuses: {ex}")
+
+        self.status_refresh_thread = threading.Thread(target=loop, daemon=True)
+        self.status_refresh_thread.start()
+
+    def refresh_app_statuses(self):
+        """실제 프로세스 상태를 다시 확인하고 변경된 카드만 갱신"""
+        changed = False
+        for app_name, app_data in self.tracked_apps.items():
+            new_active = self.is_app_running(self.PROCESS_NAMES.get(app_name, []))
+            if new_active == app_data.get("active"):
+                continue
+            app_data["active"] = new_active
+            changed = True
+
+            refs = self.app_card_refs.get(app_name)
+            if refs:
+                refs["icon"].color = (
+                    ft.Colors.BLUE if new_active else ft.Colors.GREY_400
+                )
+                refs["dot"].visible = new_active
+
+        if changed:
+            self.page.update()
+
+    def build_ui(self):
+        """Build the modern UI with proper sizing.
+
+        Skeleton layout only — more data sources (e.g. Teams) are still
+        being added, so this will get a final visual pass once everything
+        is wired up. For now: sidebar (fixed) + main content (fixed width),
+        just two Row children. A 3-panel Row (sidebar + content + a right
+        sidebar) mis-renders in this Flet build — the trailing fixed-width
+        panel silently fails to paint — so the former right-sidebar content
+        (Weekly Summary + tracking/collect buttons) now lives in a
+        horizontal control panel at the bottom of the main content instead.
+        """
+        margin = 60
+        window_width = self.page.window.width
+        window_height = self.page.window.height
+        sidebar_width = 200
+        content_width = window_width - sidebar_width - margin
+        panel_height = window_height - margin
+
+        sidebar = self.create_sidebar()
+        sidebar.height = panel_height
+
+        self.main_content_column = ft.Column(
+            self.build_dashboard_controls(),
+            expand=True,
+            scroll=ft.ScrollMode.AUTO,
+        )
+
+        main_content = ft.Container(
+            content=self.main_content_column,
+            width=content_width,
+            height=panel_height,
+        )
+
+        return ft.Row(
+            [sidebar, main_content],
+            spacing=0,
+        )
+
+    def build_dashboard_controls(self):
+        """Dashboard 화면(기본 화면)의 컨트롤 목록. Settings 등으로 전환했다가
+        다시 돌아올 때도 재사용."""
+        return [
+            self.create_header(),
+            self.create_active_sessions(),
+            self.create_control_panel(),
+            self.create_action_buttons(),
+        ]
+
+    def switch_view(self, view_name):
+        """왼쪽 네비게이션 클릭에 따라 본문 내용을 교체"""
+        if self.main_content_column is None:
+            return
+
+        if view_name == "Dashboard":
+            self.main_content_column.controls = self.build_dashboard_controls()
+        elif view_name == "Settings":
+            self.main_content_column.controls = [self.create_settings_view()]
+        else:
+            # Tracked Apps / Reports: 아직 별도 화면 미구현
+            self.main_content_column.controls = [
+                ft.Container(
+                    content=ft.Text(
+                        f"{view_name} 화면은 아직 준비 중입니다.",
+                        size=16,
+                        color=ft.Colors.GREY_600,
+                    ),
+                    padding=24,
+                )
+            ]
+
+        self.page.update()
+
+    def create_sidebar(self):
+        """Create left sidebar navigation with proper sizing"""
+        return ft.Container(
+            content=ft.Column(
+                [
+                    # Logo/Title
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Icon(ft.Icons.FAVORITE, size=28, color=ft.Colors.WHITE),
+                                ft.Text(
+                                    "WeeklyPulse",
+                                    size=18,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=ft.Colors.WHITE,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        padding=20,
+                        margin=ft.Margin(0, 0, 20, 0),
+                    ),
+                    # Navigation items
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                self.create_nav_item("Dashboard", ft.Icons.DASHBOARD, True),
+                                self.create_nav_item("Tracked Apps", ft.Icons.APPS, False),
+                                self.create_nav_item("Reports", ft.Icons.ASSIGNMENT, False),
+                                self.create_nav_item("Settings", ft.Icons.SETTINGS, False),
+                            ],
+                            spacing=8,
+                        ),
+                    ),
+                ],
+            ),
+            width=200,
+            bgcolor=ft.Colors.BLUE_GREY_900,
+            padding=16,
+        )
+
+    def create_nav_item(self, text, icon_name, is_selected):
+        """Create navigation item with proper sizing"""
+
+        def on_click(e):
+            self.on_nav_click(text)
+
+        container = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(
+                        icon_name,
+                        size=18,
+                        color=ft.Colors.WHITE
+                        if is_selected
+                        else ft.Colors.BLUE_GREY_400,
+                    ),
+                    ft.Text(
+                        text,
+                        size=13,
+                        color=ft.Colors.WHITE
+                        if is_selected
+                        else ft.Colors.BLUE_GREY_400,
+                        weight=ft.FontWeight.BOLD
+                        if is_selected
+                        else ft.FontWeight.NORMAL,
+                    ),
+                ],
+                spacing=12,
+            ),
+            padding=12,
+            border_radius=8,
+            bgcolor=ft.Colors.BLUE_GREY_800 if is_selected else None,
+            on_click=on_click,
+        )
+
+        self.nav_items[text] = container
+        return container
+
+    def create_header(self):
+        """Create top header section with proper spacing"""
+        return ft.Container(
+            content=ft.Column(
+                [
+                    # Date range
+                    ft.Text(
+                        f"Week of {(datetime.now() - timedelta(days=7)).strftime('%b %d')} - {datetime.now().strftime('%b %d')}",
+                        size=13,
+                        color=ft.Colors.GREY_600,
+                    ),
+                    # Title
+                    ft.Text(
+                        "Weekly Report Generator",
+                        size=24,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                ],
+                spacing=4,
+                alignment=ft.MainAxisAlignment.START,
+            ),
+            padding=24,
+        )
+
+    def create_active_sessions(self):
+        """Create active work sessions grid with proper sizing"""
+        # Create app cards
+        app_cards = [
+            self.create_app_card(name, data) for name, data in self.tracked_apps.items()
+        ]
+
+        # Create rows with 4 cards each
+        rows = []
+        for i in range(0, len(app_cards), 4):
+            row_cards = app_cards[i : i + 4]
+            rows.append(
+                ft.Row(
+                    row_cards,
+                    spacing=16,
+                    alignment=ft.MainAxisAlignment.START,
+                )
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "Active Work Sessions",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                    ft.Container(height=16),  # Spacer
+                    # App cards rows
+                    ft.Column(
+                        rows,
+                        spacing=16,
+                    ),
+                ],
+            ),
+            padding=24,
+            expand=True,
+        )
+
+    def create_app_card(self, app_name, app_data):
+        """Create individual app card with proper sizing"""
+        icon_ref = ft.Icon(
+            app_data["icon"],
+            size=36,
+            color=ft.Colors.BLUE if app_data["active"] else ft.Colors.GREY_400,
+        )
+        dot_ref = ft.CircleAvatar(
+            bgcolor=ft.Colors.GREEN,
+            radius=5,
+            visible=app_data["active"],
+        )
+        # Start/Stop Tracking처럼 상태 변화를 반영할 수 있도록 참조 저장
+        self.app_card_refs[app_name] = {"icon": icon_ref, "dot": dot_ref}
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    # App icon with active indicator
+                    ft.Stack(
+                        [icon_ref, dot_ref],
+                        width=36,
+                        height=36,
+                    ),
+                    # App name
+                    ft.Text(
+                        app_name,
+                        size=13,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                    # Last active
+                    ft.Text(
+                        f"Last active {app_data['last_active']}",
+                        size=11,
+                        color=ft.Colors.GREY_600,
+                    ),
+                ],
+                spacing=8,
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=16,
+            border_radius=12,
+            bgcolor=ft.Colors.WHITE,
+            border=ft.BorderSide(1, ft.Colors.GREY_200),
+            shadow=ft.BoxShadow(
+                blur_radius=8,
+                spread_radius=1,
+                color=ft.Colors.GREY_200,
+                offset=ft.Offset(0, 2),
+            ),
+            width=160,
+        )
+
+    def create_action_buttons(self):
+        """Create action buttons section with proper sizing"""
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "주간 보고서 생성",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                    ft.Container(height=16),  # Spacer
+                    ft.Row(
+                        [
+                            # Generate Report button
+                            ft.Button(
+                                "주간 보고서 생성",
+                                icon=ft.Icons.ASSIGNMENT,
+                                bgcolor=ft.Colors.BLUE,
+                                color=ft.Colors.WHITE,
+                                style=ft.ButtonStyle(
+                                    padding=ft.Padding.all(20),
+                                    shape=ft.RoundedRectangleBorder(radius=10),
+                                ),
+                                on_click=self.generate_report,
+                                width=200,
+                                height=50,
+                            ),
+                            # Preview Draft button
+                            ft.Button(
+                                "미리보기",
+                                icon=ft.Icons.VISIBILITY,
+                                bgcolor=ft.Colors.GREEN,
+                                color=ft.Colors.WHITE,
+                                style=ft.ButtonStyle(
+                                    padding=ft.Padding.all(20),
+                                    shape=ft.RoundedRectangleBorder(radius=10),
+                                ),
+                                on_click=self.preview_draft,
+                                width=200,
+                                height=50,
+                            ),
+                        ],
+                        spacing=20,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=8,
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=24,
+            bgcolor=ft.Colors.GREY_100,
+            border_radius=12,
+        )
+
+    def create_control_panel(self):
+        """Horizontal control panel: weekly summary stats + tracking/collect
+        buttons. Skeleton layout for now (see build_ui note) — was a
+        vertical right sidebar, moved here to dodge a Flet layout bug.
+        """
+        tracking_button = ft.Button(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.PLAY_ARROW if not self.is_running else ft.Icons.STOP, size=18),
+                    ft.Text(
+                        "Start Tracking" if not self.is_running else "Stop Tracking",
+                        size=13,
+                    ),
+                ],
+                spacing=8,
+            ),
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE if not self.is_running else ft.Colors.RED,
+                color=ft.Colors.WHITE,
+                padding=12,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            ),
+            on_click=self.toggle_tracking,
+            width=170,
+        )
+
+        # Store reference
+        self.tracking_button_ref = tracking_button
+
+        def collect_button(text, icon, bgcolor, on_click):
+            return ft.Button(
+                content=ft.Row(
+                    [ft.Icon(icon, size=18), ft.Text(text, size=13)],
+                    spacing=8,
+                ),
+                style=ft.ButtonStyle(
+                    bgcolor=bgcolor,
+                    color=ft.Colors.WHITE,
+                    padding=12,
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                ),
+                on_click=on_click,
+                width=170,
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "Weekly Summary",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                    ft.Container(height=12),
+                    ft.Row(
+                        [
+                            self.create_stat_card("38.5 hrs", "Total Hours Tracked", ft.Icons.SCHEDULE),
+                            self.create_stat_card("8", "Active Tools", ft.Icons.APPS),
+                            self.create_stat_card("Chrome", "Most Used This Week", ft.Icons.LANGUAGE),
+                        ],
+                        wrap=True,
+                        spacing=12,
+                    ),
+                    ft.Container(height=12),
+                    ft.Row(
+                        [
+                            tracking_button,
+                            collect_button("Collect IDE", ft.Icons.COMPUTER, ft.Colors.PURPLE, self.collect_ide),
+                            collect_button("Collect Outlook", ft.Icons.EMAIL, ft.Colors.ORANGE, self.collect_outlook),
+                            collect_button("Collect Slack", ft.Icons.CHAT, ft.Colors.PURPLE, self.collect_slack),
+                            collect_button("Confluence", ft.Icons.ARTICLE, ft.Colors.INDIGO, self.collect_confluence),
+                        ],
+                        wrap=True,
+                        spacing=8,
+                    ),
+                ],
+                spacing=8,
+            ),
+            padding=24,
+            bgcolor=ft.Colors.GREY_50,
+            border_radius=12,
+        )
+
+    def create_stat_card(self, value, label, icon_name):
+        """Create statistics card with proper sizing"""
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(icon_name, size=20, color=ft.Colors.BLUE),
+                            ft.Text(
+                                value,
+                                size=20,
+                                weight=ft.FontWeight.BOLD,
+                                color=ft.Colors.BLACK,
+                            ),
+                        ],
+                        spacing=8,
+                    ),
+                    ft.Text(
+                        label,
+                        size=11,
+                        color=ft.Colors.GREY_600,
+                    ),
+                ],
+                spacing=4,
+            ),
+            padding=12,
+            border_radius=8,
+            bgcolor=ft.Colors.WHITE,
+            border=ft.BorderSide(1, ft.Colors.GREY_200),
+        )
+
+    def on_nav_click(self, nav_item):
+        """Handle navigation item click"""
+        print(f"Navigation clicked: {nav_item}")
+        with open("nav_click_debug.log", "a", encoding="utf-8") as f:
+            f.write(f"nav clicked: {nav_item}\n")
+
+        # Update nav item styles
+        for name, container in self.nav_items.items():
+            if name == nav_item:
+                container.bgcolor = ft.Colors.BLUE_GREY_800
+                # Update icon and text colors
+                for control in container.content.controls:
+                    if isinstance(control, ft.Icon):
+                        control.color = ft.Colors.WHITE
+                    elif isinstance(control, ft.Text):
+                        control.color = ft.Colors.WHITE
+                        control.weight = ft.FontWeight.BOLD
+            else:
+                container.bgcolor = None
+                # Update icon and text colors
+                for control in container.content.controls:
+                    if isinstance(control, ft.Icon):
+                        control.color = ft.Colors.BLUE_GREY_400
+                    elif isinstance(control, ft.Text):
+                        control.color = ft.Colors.BLUE_GREY_400
+                        control.weight = ft.FontWeight.NORMAL
+
+        self.switch_view(nav_item)
+
+    def toggle_tracking(self, e):
+        """Toggle file tracking"""
+        if not self.is_running:
+            self.start_tracking()
+        else:
+            self.stop_tracking()
+
+    def _load_watch_config(self):
+        """watch_config.json을 읽어서 dict로 반환 (없으면 빈 기본값)"""
+        if os.path.exists(self.watch_config_path):
+            with open(self.watch_config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {"watch_paths": [], "file_types": [], "exclude_patterns": []}
+
+    def _save_watch_config(self, config):
+        """watch_config.json에 저장"""
+        os.makedirs(os.path.dirname(self.watch_config_path), exist_ok=True)
+        with open(self.watch_config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+    def create_settings_view(self):
+        """감시 폴더를 추가/삭제할 수 있는 Settings 화면"""
+        config = self._load_watch_config()
+        watch_paths = config.get("watch_paths", [])
+
+        self.watch_folder_list_ref = ft.Column(spacing=8)
+        self._render_watch_folder_list(watch_paths)
+
+        row_width = self.page.window.width - 200 - 60 - 48
+        self.new_folder_input = ft.TextField(
+            label="폴더 경로 입력 (예: C:\\Users\\SSG\\Documents)",
+            width=row_width - 110,
+            on_submit=self.add_watch_folder,
+        )
+
+        note = ft.Text(
+            "⚠ Tracking이 실행 중일 때 추가/삭제한 폴더는 Stop → Start Tracking으로 재시작해야 반영됩니다."
+            if self.is_running
+            else "폴더를 추가하면 다음 Start Tracking부터 감시 대상에 포함됩니다.",
+            size=12,
+            color=ft.Colors.ORANGE if self.is_running else ft.Colors.GREY_600,
+        )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "Settings",
+                        size=24,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                    ft.Container(height=8),
+                    ft.Text(
+                        "감시 폴더 (Watch Folders)",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.BLACK,
+                    ),
+                    note,
+                    ft.Container(height=12),
+                    self.watch_folder_list_ref,
+                    ft.Container(height=12),
+                    ft.Row(
+                        [
+                            self.new_folder_input,
+                            ft.Button(
+                                "추가",
+                                icon=ft.Icons.ADD,
+                                style=ft.ButtonStyle(
+                                    bgcolor=ft.Colors.BLUE,
+                                    color=ft.Colors.WHITE,
+                                    padding=14,
+                                    shape=ft.RoundedRectangleBorder(radius=8),
+                                ),
+                                on_click=self.add_watch_folder,
+                            ),
+                        ],
+                        spacing=8,
+                    ),
+                ],
+                spacing=8,
+            ),
+            padding=24,
+        )
+
+    def _render_watch_folder_list(self, watch_paths):
+        """watch_folder_list_ref 내용을 현재 watch_paths 기준으로 다시 그림"""
+        if not watch_paths:
+            self.watch_folder_list_ref.controls = [
+                ft.Text("등록된 감시 폴더가 없습니다.", size=13, color=ft.Colors.GREY_600)
+            ]
+            return
+
+        window_width = self.page.window.width
+        row_width = window_width - 200 - 60 - 48  # sidebar + margin + outer padding
+        delete_area_width = 40
+        text_width = row_width - 30 - delete_area_width - 24 - 16  # icon + delete area + padding + spacing
+
+        rows = []
+        for path in watch_paths:
+            # Note: a Row with 3+ children silently drops its LAST child in
+            # this Flet build (the same bug worked around earlier in
+            # build_ui - see its docstring). Nest 2-child Rows instead of
+            # using one 3-child Row.
+            delete_control = ft.Container(
+                content=ft.Icon(ft.Icons.DELETE_OUTLINE, color=ft.Colors.RED, size=20),
+                width=delete_area_width,
+                padding=8,
+                border_radius=6,
+                bgcolor=ft.Colors.RED_50,
+                tooltip="삭제",
+                on_click=lambda e, p=path: self.remove_watch_folder(p),
+            )
+            icon_and_text = ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.FOLDER, size=18, color=ft.Colors.BLUE),
+                        ft.Text(path, size=13, width=text_width),
+                    ],
+                    spacing=8,
+                )
+            )
+            rows.append(
+                ft.Container(
+                    width=row_width,
+                    content=ft.Row(
+                        [icon_and_text, delete_control],
+                        spacing=8,
+                    ),
+                    padding=ft.Padding(12, 8, 8, 8),
+                    bgcolor=ft.Colors.GREY_50,
+                    border_radius=8,
+                    border=ft.BorderSide(1, ft.Colors.GREY_200),
+                )
+            )
+        self.watch_folder_list_ref.controls = rows
+
+    def add_watch_folder(self, e):
+        """입력창에 적은 경로를 watch_paths에 추가.
+
+        Note: 이 Flet 데스크톱 빌드(0.86.5)에는 FilePicker의 Windows 플러그인이
+        빠져있어("Unknown control: FilePicker") 네이티브 폴더 선택 창을 쓸 수
+        없음 - 그래서 경로 직접 입력 방식으로 구현함.
+        """
+        path = (self.new_folder_input.value or "").strip().strip('"')
+        if not path:
+            self.show_snack("폴더 경로를 입력해주세요")
+            return
+
+        config = self._load_watch_config()
+        watch_paths = config.setdefault("watch_paths", [])
+        if path in watch_paths:
+            self.show_snack("이미 추가된 폴더입니다")
+            return
+
+        if not os.path.isdir(path):
+            self.show_snack(f"경로를 찾을 수 없습니다: {path}")
+            return
+
+        watch_paths.append(path)
+        self._save_watch_config(config)
+        self._render_watch_folder_list(watch_paths)
+        self.new_folder_input.value = ""
+        self.page.update()
+        self.show_snack(f"폴더 추가됨: {path}")
+
+    def remove_watch_folder(self, path):
+        """watch_paths에서 폴더 제거"""
+        config = self._load_watch_config()
+        watch_paths = config.get("watch_paths", [])
+        if path in watch_paths:
+            watch_paths.remove(path)
+            self._save_watch_config(config)
+            self._render_watch_folder_list(watch_paths)
+            self.page.update()
+            self.show_snack(f"폴더 삭제됨: {path}")
+
+    def start_tracking(self):
+        """Start file tracking"""
+        try:
+            # Load config
+            config_file = "config/watch_config.json"
+            if os.path.exists(config_file):
+                with open(config_file, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                    watch_paths = config.get("watch_paths", [])
+                    exclude_patterns = config.get("exclude_patterns", [])
+            else:
+                watch_paths = []
+                exclude_patterns = []
+
+            if not watch_paths:
+                self.show_snack("No watch paths configured")
+                return
+
+            # Create file watcher
+            log_file = "logs/file_activity.log"
+            db_path = "data/activities.db"
+
+            self.file_watcher = FileWatcher(
+                watch_paths, log_file, exclude_patterns, db_path
+            )
+
+            # Start in separate thread
+            self.watcher_thread = threading.Thread(
+                target=self.file_watcher.start, daemon=True
+            )
+            self.watcher_thread.start()
+
+            # 브라우저 확장프로그램이 활동을 보내는 로컬 서버도 같이 켜야
+            # "Start Tracking" 버튼만 눌러도 browser 수집이 동작한다
+            # (기존에는 integrated_collector.py를 따로 띄워야만 켜졌음)
+            if self.browser_server is None:
+                self.browser_server = BrowserActivityServer(db_path=db_path)
+            if not self.browser_server.is_running:
+                self.browser_server.start()
+
+            self.is_running = True
+            self.update_tracking_button()
+            self.show_snack("Tracking started")
+
+        except Exception as e:
+            self.show_snack(f"Error starting tracking: {e}")
+
+    def stop_tracking(self):
+        """Stop file tracking"""
+        if self.file_watcher:
+            self.file_watcher.stop()
+
+        if self.browser_server:
+            self.browser_server.stop()
+
+        self.is_running = False
+        self.update_tracking_button()
+        self.show_snack("Tracking stopped")
+
+    def update_tracking_button(self):
+        """Update tracking button state"""
+        if self.tracking_button_ref:
+            icon = ft.Icons.STOP if self.is_running else ft.Icons.PLAY_ARROW
+            text = "Stop Tracking" if self.is_running else "Start Tracking"
+            bgcolor = ft.Colors.RED if self.is_running else ft.Colors.BLUE
+
+            self.tracking_button_ref.content.controls[0].icon = icon
+            self.tracking_button_ref.content.controls[1].text = text
+            self.tracking_button_ref.style.bgcolor = bgcolor
+            self.page.update()
+
+    def collect_ide(self, e):
+        """Collect IDE activity"""
+        try:
+            self.show_snack("Collecting IDE activity...")
+
+            collector = IDECollector("data/activities.db")
+            ide_activities = collector.collect_all_ide_activity()
+
+            if ide_activities:
+                count = collector.save_to_database(ide_activities)
+                self.show_snack(f"Collected {count} IDE activities")
+            else:
+                self.show_snack("No IDE activity found")
+
+        except Exception as ex:
+            self.show_snack(f"Error collecting IDE: {ex}")
+
+    def collect_outlook(self, e):
+        """Collect Outlook activity via the Outlook COM API (requires Outlook
+        to be installed and running). Falls back to log-file scanning if the
+        API is unavailable.
+        """
+        try:
+            self.show_snack("Collecting Outlook activity...")
+
+            api_collector = OutlookCollector("data/activities.db")
+            api_activities = api_collector.collect_all_outlook_activity(days=7)
+
+            if api_activities:
+                count = api_collector.save_to_database(api_activities)
+                self.show_snack(f"Collected {count} Outlook activities (Outlook API)")
+                return
+
+            # API returned nothing (e.g. Outlook not running) - fall back to logs
+            log_collector = OutlookLogCollector("data/activities.db")
+            log_activities = log_collector.collect_outlook_logs()
+
+            if log_activities:
+                with ActivityDatabase("data/activities.db") as db:
+                    count = db.add_activities(log_activities)
+                self.show_snack(f"Collected {count} Outlook activities (logs)")
+            else:
+                self.show_snack("No Outlook activity found (is Outlook running?)")
+
+        except Exception as ex:
+            self.show_snack(f"Error collecting Outlook: {ex}")
+
+    def collect_slack(self, e):
+        """Collect Slack activity"""
+        try:
+            self.show_snack("Collecting Slack activity...")
+
+            # Load Slack config
+            config_file = "config/slack_config.json"
+            if os.path.exists(config_file):
+                with open(config_file, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+
+                if not config.get("enabled", False):
+                    self.show_snack("Slack collection is disabled in config")
+                    return
+
+                token = config.get("token", "")
+                if not token:
+                    self.show_snack("No Slack token configured")
+                    return
+            else:
+                self.show_snack("Slack config not found")
+                return
+
+            collector = SlackCollector("data/activities.db", token=token)
+            slack_activities = collector.collect_all_slack_activity(days=7)
+
+            if slack_activities:
+                count = collector.save_to_database(slack_activities)
+                self.show_snack(f"Collected {count} Slack activities")
+            else:
+                self.show_snack("No Slack activity found")
+
+        except Exception as ex:
+            self.show_snack(f"Error collecting Slack: {ex}")
+
+    def collect_confluence(self, e):
+        """Collect Confluence activity"""
+        try:
+            self.show_snack("Collecting Confluence activity...")
+
+            config_file = "config/confluence_config.json"
+            if os.path.exists(config_file):
+                with open(config_file, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+
+                if not config.get("enabled", False):
+                    self.show_snack("Confluence collection is disabled in config")
+                    return
+
+                if not config.get("personal_access_token", ""):
+                    self.show_snack("No Confluence token configured")
+                    return
+            else:
+                self.show_snack("Confluence config not found")
+                return
+
+            collector = ConfluenceCollector(
+                "data/activities.db", config_path=config_file
+            )
+            confluence_activities = collector.collect_all_confluence_activity(days=7)
+
+            if confluence_activities:
+                count = collector.save_to_database(confluence_activities)
+                self.show_snack(f"Collected {count} Confluence activities")
+            else:
+                self.show_snack("No Confluence activity found")
+
+        except Exception as ex:
+            self.show_snack(f"Error collecting Confluence: {ex}")
+
+    def generate_report(self, e):
+        """Generate weekly report"""
+        try:
+            self.show_snack("Generating weekly report...")
+            generator = ReportGenerator()
+            result = generator.generate_and_save_weekly_report()
+            generated_paths = [path for path in result["file_paths"].values() if path]
+            if generated_paths:
+                self.show_snack(f"보고서 생성 완료: {generated_paths[0]}")
+                print("Generated weekly report files:")
+                for path in generated_paths:
+                    print(f"- {path}")
+            else:
+                self.show_snack("보고서 생성 결과 파일이 없습니다")
+        except Exception as ex:
+            print(f"Error generating weekly report: {ex}")
+            self.show_snack(f"Error generating weekly report: {ex}")
+
+    def preview_draft(self, e):
+        """Preview draft report"""
+        try:
+            self.show_snack("Previewing draft report...")
+            generator = ReportGenerator()
+            weekly_data = generator.collect_weekly_data()
+            markdown_preview = generator.generate_markdown(weekly_data)
+            print("\n=== Weekly Report Preview ===\n")
+            print(markdown_preview)
+            self.show_snack(f"미리보기 생성 완료 ({len(markdown_preview)}자)")
+        except Exception as ex:
+            print(f"Error previewing weekly report: {ex}")
+            self.show_snack(f"Error previewing weekly report: {ex}")
+
+    def show_snack(self, message):
+        """Show snack bar message"""
+        snack_bar = ft.SnackBar(
+            content=ft.Text(message),
+            duration=3000,
+        )
+        self.page.overlay.append(snack_bar)
+        snack_bar.open = True
+        self.page.update()
+
+
+def main(page: ft.Page):
+    """Main entry point"""
+    app = WeeklyPulseApp(page)
+    page.add(app.build_ui())
+    page.update()
+    app.start_status_refresh_loop()
+
+
+if __name__ == "__main__":
+    ft.run(main)

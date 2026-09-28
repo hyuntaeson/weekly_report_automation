@@ -1,0 +1,28 @@
+{
+  "watch_paths": [
+    "C:\\Users\\SSG\\Documents",
+    "C:\\Users\\SSG\\Desktop",
+    "C:\\Users\\SSG\\Downloads",
+    "C:\\01.AI",
+    "D:\\★AI★",
+    "D:\\★★프로젝트★★",
+    "D:\\★★★AI-project-template"
+  ],
+  "file_types": [
+    ".xlsx",
+    ".xls",
+    ".pptx",
+    ".ppt",
+    ".docx",
+    ".doc",
+    ".txt",
+    ".md",
+    ".py",
+    ".js"
+  ],
+  "exclude_patterns": [
+    "*.tmp",
+    "~*",
+    "*.cache"
+  ]
+}

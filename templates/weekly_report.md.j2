@@ -1,0 +1,68 @@
+# 주간 활동 보고서 ({{ week_start }} ~ {{ week_end }})
+
+## 요약
+{% if has_activities %}
+이번 주 총 {{ total_activities }}건의 활동이 기록되었습니다.
+{% if ai_tool_sessions > 0 %}이 중 Claude Code 기반 AI 활동은 {{ ai_tool_sessions }}건입니다.
+{% endif %}{% else %}
+이번 주 기록된 활동이 없습니다.
+{% endif %}
+
+## 주요 하이라이트
+{% for highlight in highlights %}
+- {{ highlight }}
+{% endfor %}
+
+## 소스별 활동
+{% if by_source %}{% for source, count in by_source.items() %}
+- {{ source }}: {{ count }}건
+{% endfor %}{% else %}
+- 집계된 소스 활동이 없습니다.
+{% endif %}
+
+## 액션별 활동
+{% if by_action %}{% for action, count in by_action.items() %}
+- {{ action }}: {{ count }}건
+{% endfor %}{% else %}
+- 집계된 액션이 없습니다.
+{% endif %}
+
+## 액션별 상세 내역 (실제 파일 목록)
+{% if activities_by_action %}{% for action, data in activities_by_action.items() %}
+### {{ action }} ({{ data.total }}건)
+{% if data.detail_hidden %}
+- 건수만 집계됩니다 (상세 목록 생략).
+{% else %}{% for item in data.files %}
+- [{{ item.timestamp }}] {{ item.file_path }}{% if item.summary %}: {{ item.summary }}{% endif %} ({{ item.source }})
+{% endfor %}{% if data.more > 0 %}
+- ... 외 {{ data.more }}건 더
+{% endif %}{% endif %}
+{% endfor %}{% else %}
+- 상세 내역이 없습니다.
+{% endif %}
+
+## 일별 활동 추이
+{% for day in daily_counts %}
+- {{ day.date }}: {{ day.count }}건
+{% endfor %}
+
+## 주요 작업 파일/프로젝트
+{% if top_projects_or_files %}{% for path, count in top_projects_or_files %}
+- {{ path }} ({{ count }}회)
+{% endfor %}{% else %}
+- 집계 가능한 파일/프로젝트 정보가 없습니다.
+{% endif %}
+
+## 파일 유형별 활동
+{% if by_file_type %}{% for item in by_file_type %}
+- {{ item.file_type }} / {{ item.action }}: {{ item.count }}건
+{% endfor %}{% else %}
+- 파일 유형별 집계 데이터가 없습니다.
+{% endif %}
+
+## 최근 활동 (최대 {{ raw_activities|length }}건)
+{% if raw_activities %}{% for activity in raw_activities|reverse %}
+- {{ activity.timestamp }} | {{ activity.source }} | {{ activity.action }} | {{ activity.file_path }}
+{% endfor %}{% else %}
+- 표시할 최근 활동이 없습니다.
+{% endif %}

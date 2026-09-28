@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Weekly Report Activity Tracker",
+  "version": "1.0.0",
+  "description": "방문한 웹페이지 활동을 로컬 주간보고 자동화 시스템에 전달합니다.",
+  
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  
+  "host_permissions": [
+    "http://localhost:5757/*",
+    "http://127.0.0.1:5757/*"
+  ],
+  
+  "background": {
+    "service_worker": "background.js"
+  },
+  
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Weekly Report Activity Tracker",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
