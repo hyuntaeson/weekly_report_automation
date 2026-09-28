@@ -84,7 +84,12 @@
 - 검증: 실제 데이터로 그래프 실행 동일 결과(111건, 주제 10개), 통합 테스트 9/9
 - 의존성 추가: langgraph 1.2.12
 
-### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
+### 12. macOS 이식 준비 (완료, macOS 실기 검증 필요)
+- `modern_gui.py`: win32gui/win32process 가드 — 비Windows는 psutil 프로세스 존재로 판정. macOS 프로세스명(Slack/Teams/Outlook/Word/Chrome 등) 추가
+- `outlook_collector.py`: win32com 가드 + COM 없으면 Graph 폴백 — teams_collector 디바이스 토큰으로 Inbox/SentItems 메일 수집. 캘린더는 teams_collector가 커버
+- `ide_collector.py`: Windows/macOS/Linux 경로 후보 통합 (exists() 필터가 자동 분기)
+- `requirements.txt`: `pywin32`를 `sys_platform == 'win32'` 조건부로
+- macOS 실기 검증 필요: GUI 기동, Graph 디바이스 로그인, Outlook 메일 수집 동작 여부
 
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
