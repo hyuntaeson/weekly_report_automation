@@ -24,7 +24,7 @@
 ### 3. 브라우저 활동이 한 번도 보고서에 안 나오는 문제 → GUI가 브라우저 서버를 안 켜고 있었음
 - **원인 조사**: DB를 직접 조회해서 `source='browser'` 행이 지금까지 0건인 것을 확인. `modern_gui.py`의 "Start Tracking" 버튼(`start_tracking()`)이 `FileWatcher`만 시작하고, 크롬 확장이 POST하는 로컬 서버(`browser_activity_server.py`, 포트 5757)는 시작하지 않고 있었음
 - **조치**: `start_tracking()`/`stop_tracking()`에 `BrowserActivityServer` 시작/종료 로직 추가
-- **미검증**: 코드 수정은 완료. 사용자가 GUI에서 재시작 후 실제 브라우징하면서 DB에 browser 행이 쌓이는지는 아직 확인 안 됨 — **다음 세션 최우선 확인 사항**
+- **검증 완료 (2026-09-28)**: GUI에서 Start Tracking으로 포트 5757 리스닝 확인. 이후 조사에서 크롬 확장 자체가 설치되어 있지 않은 것도 발견(Chrome/Edge Secure Preferences 양쪽에 미등록) → 사용자가 `chrome://extensions`에서 개발자 모드로 `browser_extension/` 로드 + 활성화 → 실제 사내 사이트(Confluence/SharePoint/Bitbucket) 방문 기록 5건이 DB에 정상 기록됨을 확인. end-to-end 동작 검증 끝
 
 ### 검증
 - `test_all_completed.py` 9/9 전체 재실행 통과
@@ -34,7 +34,7 @@
 ## 🎯 다음 할 일
 
 ### 최우선
-1. **브라우저 활동 실제 수집 확인** — GUI에서 Stop → Start Tracking 다시 누른 뒤 크롬으로 실제 사이트 방문(예: fastcampus.co.kr) 후 `SELECT * FROM activities WHERE source='browser'`로 행이 쌓이는지 확인. 안 쌓이면 크롬 확장(`chrome://extensions`)이 실제로 로드/활성화돼 있는지, `manifest.json`의 host_permissions(`localhost:5757`)가 맞는지부터 재점검
+1. ~~**브라우저 활동 실제 수집 확인**~~ ✅ **완료 (2026-09-28)** — GUI Start Tracking이 5757 서버 정상 기동, 크롬 확장 설치 후 실제 브라우징 기록이 DB에 기록됨을 확인. 참고: 확장 프로그램이 아예 미설치 상태였던 것도 이번에 함께 발견/해결됨
 2. **Word/PPT 파일도 실제 MS Word/PowerPoint에서 정상 열람되는지 사용자 육안 확인** — 사내 DRM 재암호화 후에도 실사용에는 문제없는지 검증 필요 (코드로는 검증 불가)
 
 ### 중기
@@ -66,7 +66,7 @@
 2. **Notepad류 캡처는 저장 시점만**: 미저장 상태의 실시간 타이핑 내용은 캡처 불가
 3. **UI 자동클릭 스크롤 한계**: Flet 앱의 스크롤 영역에 대한 자동화 도구 마우스 휠 이벤트가 인식 안 됨. 실사용 검증은 사용자 직접 클릭 권장
 4. **Outlook API**: Outlook이 설치되어 있어야 하며 실행 중이어야 함
-5. **브라우저 수집**: 코드는 수정했으나 사용자 환경에서 실제 수집되는지 아직 미확인 (위 "다음 할 일" 1번 참고)
+5. ~~브라우저 수집~~ **해결됨 (2026-09-28)**: GUI Start Tracking → 서버 기동 → 확장 프로그램 → DB 기록까지 실사용 검증 완료
 6. **Teams 연동 미착수**: Azure AD 앱 등록 및 Graph API 인증정보 미확보 상태
 7. **Devin 연동 불가**: 클라우드 전용 서비스로 로컬 로그 파일 없음
 
