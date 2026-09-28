@@ -11,8 +11,15 @@ import os
 import threading
 import time
 import psutil
-import win32gui
-import win32process
+
+try:
+    import win32gui
+    import win32process
+
+    _WIN32_AVAILABLE = True
+except ImportError:
+    win32gui = win32process = None
+    _WIN32_AVAILABLE = False
 from collections import Counter
 from datetime import datetime, timedelta
 from file_watcher import FileWatcher, FileActivityHandler
@@ -29,19 +36,21 @@ class WeeklyPulseApp:
     """Modern WeeklyPulse-style application with proper sizing"""
 
     # 실제 실행 여부를 확인할 프로세스 이름 (Confluence는 웹 기반이라 별도 실행파일이 없음)
+    # 각 항목에 Windows + macOS/Linux 프로세스명을 함께 둠 — 비Windows 환경에서는
+    # 창 검사 없이 psutil 프로세스 존재 여부로만 판정 (win32gui는 Windows 전용).
     PROCESS_NAMES = {
-        "Slack": ["slack.exe"],
-        "Excel": ["excel.exe"],
-        "PowerPoint": ["powerpnt.exe"],
-        "Notepad": ["notepad.exe"],
-        "Chrome": ["chrome.exe"],
-        "Claude Code": ["claude.exe"],
-        "Devin": ["devin.exe"],
+        "Slack": ["slack.exe", "Slack"],
+        "Excel": ["excel.exe", "Microsoft Excel"],
+        "PowerPoint": ["powerpnt.exe", "Microsoft PowerPoint"],
+        "Notepad": ["notepad.exe", "TextEdit"],
+        "Chrome": ["chrome.exe", "Google Chrome"],
+        "Claude Code": ["claude.exe", "claude"],
+        "Devin": ["devin.exe", "Devin"],
         # 신형 Teams(ms-teams.exe) + 구형 클래식 Teams(Teams.exe) 둘 다 감지
-        "Teams": ["ms-teams.exe", "teams.exe"],
+        "Teams": ["ms-teams.exe", "teams.exe", "Microsoft Teams", "MSTeams"],
         # 클래식 Outlook(outlook.exe) + 신형 Outlook(olk.exe)
-        "Outlook": ["outlook.exe", "olk.exe"],
-        "Word": ["winword.exe"],
+        "Outlook": ["outlook.exe", "olk.exe", "Microsoft Outlook"],
+        "Word": ["winword.exe", "Microsoft Word"],
     }
 
     def is_app_running(self, process_names):
@@ -65,6 +74,10 @@ class WeeklyPulseApp:
 
         if not target_pids:
             return False
+
+        # win32 창 검사는 Windows 전용 — 다른 플랫폼은 프로세스 존재로 판정
+        if not _WIN32_AVAILABLE:
+            return True
 
         found = {"visible": False}
 

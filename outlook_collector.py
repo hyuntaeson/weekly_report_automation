@@ -5,32 +5,114 @@ Collects email and calendar activity from Microsoft Outlook
 """
 
 import os
-import win32com.client
+
+try:
+    import win32com.client
+
+    _WIN32COM_AVAILABLE = True
+except ImportError:
+    win32com = None
+    _WIN32COM_AVAILABLE = False
+
 from datetime import datetime, timedelta
 from database import ActivityDatabase
 from llm_summarizer import LLMSummarizer
 
 
 class OutlookCollector:
-    """Collector for Outlook activities"""
+    """Collector for Outlook activities.
+
+    Windows: 로컬 Outlook COM으로 수집.
+    macOS/Linux(COM 없음): teams_collector의 Graph 위임 토큰으로
+    메일(Inbox/SentItems)을 수집한다. 캘린더는 teams_collector가 이미
+    Graph로 수집하므로 여기서는 메일만 다룬다.
+    """
 
     def __init__(self, db_path='data/activities.db'):
         self.db_path = db_path
         self.outlook = None
         self.summarizer = LLMSummarizer()
-    
+
     def connect_outlook(self):
         """Connect to Outlook application"""
+        if not _WIN32COM_AVAILABLE:
+            return False
         try:
             self.outlook = win32com.client.Dispatch("Outlook.Application")
             return True
         except Exception as e:
             print(f"Error connecting to Outlook: {e}")
             return False
+
+    def _graph_headers(self):
+        """teams_collector의 디바이스 로그인 토큰으로 Graph 호출 헤더."""
+        try:
+            from teams_collector import get_access_token
+            token = get_access_token()
+        except Exception as e:
+            print(f"Warning: Graph token unavailable: {e}")
+            return None
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    def _collect_mail_via_graph(self, days, folder, action, path_prefix,
+                                recipient_key, recipient_field):
+        """Graph API로 메일 수집 (macOS/Linux 폴백).
+        folder: 'Inbox' 또는 'SentItems'."""
+        import requests as http
+
+        headers = self._graph_headers()
+        if headers is None:
+            return []
+        since = (datetime.now() - timedelta(days=days)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        url = (
+            "https://graph.microsoft.com/v1.0/me/mailFolders/"
+            f"{folder}/messages?$select=subject,{recipient_field},receivedDateTime,"
+            f"sentDateTime,bodyPreview&$top=50&$orderby=receivedDateTime desc"
+        )
+        try:
+            items = http.get(url, headers=headers, timeout=15).json().get(
+                "value", []
+            )
+        except Exception as e:
+            print(f"Warning: Graph mail fetch failed: {e}")
+            return []
+
+        activities = []
+        for msg in items:
+            sent = msg.get("sentDateTime") or msg.get("receivedDateTime")
+            if sent and sent < since:
+                continue
+            recipients = msg.get(recipient_field) or []
+            activity = {
+                'timestamp': sent or msg.get("receivedDateTime"),
+                'action': action,
+                'file_path': f"{path_prefix}: {msg.get('subject')}",
+                'file_type': 'email',
+                'source': 'outlook',
+                'details': {
+                    'subject': msg.get('subject'),
+                    recipient_key: len(recipients),
+                    'summary': self._summarize_text(
+                        msg.get('bodyPreview') or ''
+                    ),
+                },
+            }
+            activities.append(activity)
+        return activities
     
     def collect_email_activity(self, days=7):
         """Collect email activity from the last N days"""
         if not self.connect_outlook():
+            if not _WIN32COM_AVAILABLE:
+                return self._collect_mail_via_graph(
+                    days, "Inbox", "email_received", "Email",
+                    "sender", "from"
+                )
             return []
         
         activities = []
@@ -75,6 +157,11 @@ class OutlookCollector:
     def collect_sent_email_activity(self, days=7):
         """Collect sent email activity from the last N days"""
         if not self.connect_outlook():
+            if not _WIN32COM_AVAILABLE:
+                return self._collect_mail_via_graph(
+                    days, "SentItems", "email_sent", "Sent",
+                    "recipients", "toRecipients"
+                )
             return []
         
         activities = []
@@ -165,7 +252,9 @@ class OutlookCollector:
         return any(marker in text for marker in teams_markers)
 
     def collect_calendar_activity(self, days=7):
-        """Collect calendar activity from the last N days"""
+        """Collect calendar activity from the last N days.
+        macOS/Linux에서는 teams_collector.collect_calendar_events가
+        Graph로 이미 수집하므로 여기서는 COM 없으면 빈 리스트."""
         if not self.connect_outlook():
             return []
         
@@ -263,10 +352,14 @@ class OutlookLogCollector:
         """Collect activity from Outlook log files"""
         activities = []
         
-        # Outlook log file locations
+        # Outlook log file locations (Windows + macOS)
         outlook_log_paths = [
             os.path.expanduser("~/AppData/Local/Microsoft/Outlook"),
             os.path.expanduser("~/AppData/Roaming/Microsoft/Outlook"),
+            os.path.expanduser(
+                "~/Library/Containers/com.microsoft.Outlook/Data/Library/Logs"
+            ),
+            os.path.expanduser("~/Library/Logs/Microsoft/Outlook"),
         ]
         
         for path in outlook_log_paths:

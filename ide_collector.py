@@ -44,12 +44,16 @@ class IDECollector:
     
     def _find_vscode_paths(self):
         """Find VSCode installation paths"""
+        # Windows/macOS/Linux 경로를 모두 후보에 두고 존재하는 것만 사용
         possible_paths = [
             os.path.expanduser("~/.vscode"),
             os.path.expanduser("~/AppData/Roaming/Code"),
             os.path.expanduser("~/AppData/Local/Programs/Microsoft VS Code"),
+            os.path.expanduser("~/Library/Application Support/Code"),
+            os.path.expanduser("~/.config/Code"),
             "C:\\Program Files\\Microsoft VS Code",
             "C:\\Program Files (x86)\\Microsoft VS Code",
+            "/Applications/Visual Studio Code.app",
         ]
         
         found_paths = []
@@ -110,6 +114,8 @@ class IDECollector:
             os.path.expanduser("~/.orca"),
             os.path.expanduser("~/AppData/Local/Orca"),
             os.path.expanduser("~/AppData/Roaming/Orca"),
+            os.path.expanduser("~/Library/Application Support/Orca"),
+            os.path.expanduser("~/.config/Orca"),
         ]
         
         found_paths = []
@@ -177,6 +183,10 @@ class RecentFileCollector:
         vscode_paths = [
             os.path.expanduser("~/AppData/Roaming/Code/User/globalStorage"),
             os.path.expanduser("~/.vscode/User/globalStorage"),
+            os.path.expanduser(
+                "~/Library/Application Support/Code/User/globalStorage"
+            ),
+            os.path.expanduser("~/.config/Code/User/globalStorage"),
         ]
         
         for path in vscode_paths:
