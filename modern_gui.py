@@ -13,6 +13,7 @@ import time
 import psutil
 import win32gui
 import win32process
+from collections import Counter
 from datetime import datetime, timedelta
 from file_watcher import FileWatcher, FileActivityHandler
 from ide_collector import IDECollector, RecentFileCollector
@@ -124,10 +125,13 @@ class WeeklyPulseApp:
                 self.PROCESS_NAMES.get(app_name, [])
             )
 
-        # Statistics
-        self.total_hours = 38.5
-        self.active_tools = 8
-        self.most_used = "Chrome"
+        # Statistics - 실제 수집 데이터 기반으로 compute_weekly_stats()가 채움
+        self.total_hours = "0 hrs"
+        self.active_tools = 0
+        self.most_used = "-"
+        self.stat_value_refs = {}
+        self._stats_last_computed = 0.0
+        self.compute_weekly_stats()
 
         # UI references
         self.tracking_button_ref = None
@@ -137,6 +141,73 @@ class WeeklyPulseApp:
         self.main_content_column = None
         self.watch_folder_list_ref = None
         self.watch_config_path = "config/watch_config.json"
+
+    def compute_weekly_stats(self, force=False):
+        """실제 데이터 기반 주간 통계 계산.
+        - total_hours: 최근 7일 활동이 기록된 시간대(hour bucket) 수
+        - active_tools: tracked_apps 중 현재 실행 중으로 감지된 앱 수
+        - most_used: 최근 7일 활동이 가장 많은 소스 → 앱 이름 매핑"""
+        now = time.time()
+        if not force and now - self._stats_last_computed < 60:
+            # DB 조회는 60초에 한 번만, 실행 중 앱 수는 매번 갱신
+            self.active_tools = sum(
+                1 for app in self.tracked_apps.values() if app.get("active")
+            )
+            return
+        self._stats_last_computed = now
+
+        hours = 0
+        most_source = None
+        try:
+            today = datetime.now()
+            week_start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+            with ActivityDatabase() as db:
+                acts = db.get_activities_by_date_range(
+                    week_start, today.strftime("%Y-%m-%d")
+                )
+            hours = len(
+                {(a.get("timestamp") or "")[:13] for a in acts if a.get("timestamp")}
+            )
+            counts = Counter(a.get("source") or "unknown" for a in acts)
+            if counts:
+                most_source = counts.most_common(1)[0][0]
+        except Exception as e:
+            print(f"Warning: weekly stats computation failed: {e}")
+
+        source_to_app = {
+            "browser": "Chrome",
+            "teams": "Teams",
+            "outlook": "Outlook",
+            "slack": "Slack",
+            "confluence": "Confluence",
+            "claude_code": "Claude Code",
+            "vscode": "VS Code",
+            "orca": "Orca",
+            "filesystem": "Files",
+        }
+        self.total_hours = f"{hours} hrs"
+        self.active_tools = sum(
+            1 for app in self.tracked_apps.values() if app.get("active")
+        )
+        self.most_used = source_to_app.get(most_source, most_source or "-")
+
+    def refresh_stats_cards(self):
+        """통계 재계산 후 카드 텍스트 갱신"""
+        self.compute_weekly_stats()
+        refs = self.stat_value_refs
+        values = {
+            "hours": self.total_hours,
+            "tools": str(self.active_tools),
+            "most": self.most_used,
+        }
+        changed = False
+        for key, value in values.items():
+            ref = refs.get(key)
+            if ref is not None and ref.value != value:
+                ref.value = value
+                changed = True
+        if changed:
+            self.page.update()
 
     def start_status_refresh_loop(self, interval_seconds=5):
         """백그라운드에서 주기적으로 실제 프로세스 실행 여부를 다시 확인해서
@@ -149,6 +220,7 @@ class WeeklyPulseApp:
                 time.sleep(interval_seconds)
                 try:
                     self.refresh_app_statuses()
+                    self.refresh_stats_cards()
                 except Exception as ex:
                     print(f"Error refreshing app statuses: {ex}")
 
@@ -560,11 +632,10 @@ class WeeklyPulseApp:
                     ft.Container(height=12),
                     ft.Row(
                         [
-                            self.create_stat_card("38.5 hrs", "Total Hours Tracked", ft.Icons.SCHEDULE),
-                            self.create_stat_card("8", "Active Tools", ft.Icons.APPS),
-                            self.create_stat_card("Chrome", "Most Used This Week", ft.Icons.LANGUAGE),
+                            self.create_stat_card("hours", "Total Hours Tracked", ft.Icons.SCHEDULE),
+                            self.create_stat_card("tools", "Active Tools", ft.Icons.APPS),
+                            self.create_stat_card("most", "Most Used This Week", ft.Icons.LANGUAGE),
                         ],
-                        wrap=True,
                         spacing=12,
                     ),
                     ft.Container(height=12),
@@ -587,35 +658,44 @@ class WeeklyPulseApp:
             border_radius=12,
         )
 
-    def create_stat_card(self, value, label, icon_name):
-        """Create statistics card with proper sizing"""
+    def create_stat_card(self, key, label, icon_name):
+        """통계 카드 생성. key별 텍스트 참조를 남겨서 실시간 갱신이 가능하도록."""
+        initial = {
+            "hours": self.total_hours,
+            "tools": str(self.active_tools),
+            "most": self.most_used,
+        }[key]
+        value_text = ft.Text(
+            initial,
+            size=18,
+            weight=ft.FontWeight.BOLD,
+            color=ft.Colors.BLACK,
+        )
+        self.stat_value_refs[key] = value_text
         return ft.Container(
             content=ft.Column(
                 [
                     ft.Row(
                         [
-                            ft.Icon(icon_name, size=20, color=ft.Colors.BLUE),
+                            ft.Icon(icon_name, size=16, color=ft.Colors.BLUE),
+                            value_text,
                             ft.Text(
-                                value,
-                                size=20,
-                                weight=ft.FontWeight.BOLD,
-                                color=ft.Colors.BLACK,
+                                label,
+                                size=11,
+                                color=ft.Colors.GREY_600,
                             ),
                         ],
-                        spacing=8,
-                    ),
-                    ft.Text(
-                        label,
-                        size=11,
-                        color=ft.Colors.GREY_600,
+                        spacing=6,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
-                spacing=4,
+                spacing=0,
             ),
-            padding=12,
+            padding=ft.padding.symmetric(horizontal=10, vertical=8),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
             border=ft.BorderSide(1, ft.Colors.GREY_200),
+            expand=1,
         )
 
     def on_nav_click(self, nav_item):
