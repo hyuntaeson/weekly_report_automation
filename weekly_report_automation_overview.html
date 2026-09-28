@@ -147,12 +147,13 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
 <table class="sph-table">
   <thead><tr><th>계층</th><th>역할</th><th>구성 요소</th></tr></thead>
   <tbody>
-    <tr><td><b>수집</b></td><td>활동 이벤트 캡처</td><td>FileWatcher(파일 감시) · Chrome 확장(브라우저 방문) · IDE 수집기(VS Code/Orca/Claude Code) · Outlook 수집기 · Teams 수집기 · Slack/Confluence 수집기</td></tr>
-    <tr><td><b>통합</b></td><td>주기적 수집 오케스트레이션</td><td>IntegratedCollector — 소스별 주기(5~30분) 통합 실행</td></tr>
-    <tr><td><b>저장</b></td><td>활동 정규화·영속화</td><td>SQLite (activities: 시각/액션/경로/소스/상세) + 중복 방지 upsert</td></tr>
-    <tr><td><b>생성</b></td><td>집계·요약·산출</td><td>ReportGenerator(Jinja2 → Markdown, python-docx → Word) · LLM Summarizer</td></tr>
-    <tr><td><b>AI 분석</b></td><td>수집 데이터의 의미 분석·그룹화</td><td>임베딩 클러스터링(주제별 자동 분류) · LCEL 요약 체인 · LangGraph 파이프라인</td></tr>
-    <tr><td><b>실행</b></td><td>사용자 인터페이스</td><td>Flet GUI — 추적 시작/중지, 수집 버튼, 실시간 앱 실행 상태</td></tr>
+    <tr><td><b>수집</b></td><td>활동 이벤트 캡처</td><td>FileWatcher(파일 생성·수정·삭제 + 오피스 문서 내용 diff) · Chrome 확장(방문 기록) · IDE 수집기(VS Code/Orca/Claude Code) · Outlook 수집기(메일·캘린더) · Teams 수집기(채팅·일정) · Slack/Confluence 수집기</td></tr>
+    <tr><td><b>통합</b></td><td>주기적 수집 오케스트레이션</td><td>IntegratedCollector — 소스별 주기(5~30분)로 백그라운드 스레드 실행, GUI 버튼으로 즉시 수집도 가능</td></tr>
+    <tr><td><b>정제</b></td><td>노이즈·민감정보 제거</td><td>DRM/임시파일 필터 · OAuth 콜백 등 민감 URL 제거 · created→deleted 일시 파일 정리 · 경로 정규화 · 동일 회의 중복 제거</td></tr>
+    <tr><td><b>저장</b></td><td>활동 정규화·영속화</td><td>SQLite 3테이블 — activities(시각/액션/경로/소스/상세) + weekly_summaries(주간 집계) + activity_embeddings(의미 벡터), UNIQUE upsert로 중복 방지·소스별 요약 캐시</td></tr>
+    <tr><td><b>생성</b></td><td>집계·요약·산출</td><td>LangGraph 파이프라인(collect→filter→analyze→aggregate→output)으로 주간 데이터 집계 → Jinja2 템플릿으로 Markdown 산출, minimal docx 빌더로 Word 산출</td></tr>
+    <tr><td><b>AI 분석</b></td><td>수집 데이터의 의미 분석·그룹화</td><td>임베딩 클러스터링(주제별 자동 분류 + 대표 주제명 LLM 생성) · LCEL 요약 체인(소스별 프롬프트) · 내가 보낸 Teams 메시지 요약</td></tr>
+    <tr><td><b>실행</b></td><td>사용자 인터페이스</td><td>Flet GUI — 추적 시작/중지, 수집 버튼, 실시간 앱 실행 상태 표시(Active Work Sessions), 감시 폴더 관리</td></tr>
   </tbody>
 </table>
 <h2 class="sph-section-title">데이터 흐름</h2>
@@ -160,12 +161,12 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   활동 발생 → 수집기가 이벤트 정규화 → SQLite 적재(중복 제거) → 주간 보고 시
   노이즈 필터·중복 제거 후 집계 → <b>AI 분석(주제 분류·요약)</b> → Markdown/Word 출력
 </div>
-<h2 class="sph-section-title">AI 확장 계층 (적용 예정)</h2>
+<h2 class="sph-section-title">AI 적용 계층</h2>
 <ul class="sph-list">
-  <li><b>주제별 자동 분류</b> — 파일·채팅·브라우저에 흩어진 활동을 AI가 "의미"로 묶어, 보고서를 단순 나열이 아닌 <b>주제(작업) 단위</b>로 재구성</li>
-  <li><b>유사 작업 검색</b> — 활동 기록을 벡터로 저장해 "지난달 비슷한 작업"을 바로 찾는 개인 작업 검색기</li>
-  <li><b>요약 자동화 표준화</b> — 소스별 프롬프트를 체인(LCEL)으로 관리해 요약 품질을 일원화</li>
-  <li><b>파이프라인 구조화</b> — 수집→요약→생성 절차를 단계별 그래프(LangGraph)로 만들어 실패 시 자동 폴백·확장 용이</li>
+  <li><b>주제별 자동 분류</b> — 임베딩 클러스터링으로 흩어진 활동을 "의미"로 묶어, 보고서를 단순 나열이 아닌 <b>주제(작업) 단위</b>로 재구성 (적용 완료)</li>
+  <li><b>임베딩 영속 저장</b> — 활동 벡터를 SQLite에 누적해 재계산 없이 재사용, "지난주 유사 작업" 검색의 기반이 됨 (적용 완료)</li>
+  <li><b>요약 체인 표준화</b> — 소스별 프롬프트를 LCEL 체인으로 관리해 요약 품질을 일원화 (적용 완료)</li>
+  <li><b>파이프라인 구조화</b> — 수집→필터→분석→집계→출력을 LangGraph 노드로 구성해 조건 분기·폴백·단계별 확장 용이 (적용 완료)</li>
 </ul>
 
   <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>3 / 6</span></div>
@@ -178,22 +179,16 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
 <table class="sph-table">
   <thead><tr><th>소스</th><th>수집 방식</th><th>비고</th></tr></thead>
   <tbody>
-    <tr><td>파일시스템</td><td>watchdog 실시간 감시 + 오피스 내용 추출(pandas/docx/pptx)</td><td>DRM 문서는 시그니처 감지 후 폴백</td></tr>
-    <tr><td>브라우저</td><td>Chrome Manifest V3 확장 → 로컬 HTTP 서버(127.0.0.1:5757) POST</td><td>인증/SSO URL은 전송 전 필터링</td></tr>
-    <tr><td>IDE</td><td>VS Code/Orca/Claude Code 로그·storage 파싱</td><td>AI 코딩 활동 별도 집계</td></tr>
-    <tr><td>Outlook</td><td>Outlook COM(pywin32) — 메일·캘린더</td><td>Teams 회의 링크 자동 감지</td></tr>
-    <tr><td>Teams</td><td>Microsoft Graph — 디바이스 코드 위임권한(채팅+일정+참석자)</td><td>토큰 로컬 저장·자동 갱신</td></tr>
-    <tr><td>Slack/Confluence</td><td>각 사 REST API + 토큰</td><td>토큰 파일 분리 관리</td></tr>
+    <tr><td>파일시스템</td><td>watchdog 실시간 감시 + 오피스·텍스트 내용 변경분(diff) 추출(docx/pptx/xlsx/md/txt)</td><td>DRM 문서는 OLE2 시그니처 감지 후 "보안 문서" 폴백 메시지</td></tr>
+    <tr><td>브라우저</td><td>Chrome Manifest V3 확장 → 로컬 HTTP 서버(127.0.0.1:5757) POST → SQLite 적재</td><td>인증 토큰·OAuth 콜백 URL은 전송 전 필터링</td></tr>
+    <tr><td>IDE</td><td>VS Code/Orca/Claude Code 로그·storage 파싱</td><td>OS별 표준 경로 자동 탐색, AI 코딩 활동 별도 집계</td></tr>
+    <tr><td>Outlook</td><td>Outlook COM(pywin32)으로 메일·캘린더 수집, 미실행 시 Graph 자동 폴백</td><td>Teams 회의 링크·참석자 감지</td></tr>
+    <tr><td>Teams</td><td>Microsoft Graph(디바이스 코드 위임권한) — 채팅·일정·참석자·1:1 대화 상대방 해석</td><td>토큰 로컬 저장·자동 갱신, 429 자동 재시도</td></tr>
+    <tr><td>Slack/Confluence</td><td>각 사 REST API + 토큰</td><td>토큰 파일 분리 관리, Confluence 페이지 본문 요약 수집</td></tr>
+    <tr><td><b>AI 분석</b></td><td>사내 LiteLLM 프록시 — 채팅 요약(haiku-4-5) + 임베딩(text-embedding-3-large) → 의미 클러스터링</td><td>벡터는 SQLite에 영속 저장해 재사용</td></tr>
+    <tr><td><b>보고서 생성</b></td><td>LangGraph 파이프라인 → Jinja2(Markdown) + minimal docx 빌더(Word)</td><td>활동 없는 주간은 AI 분석 자동 스킵</td></tr>
   </tbody>
 </table>
-<h2 class="sph-section-title">공통 보안·품질 장치</h2>
-<ul class="sph-list">
-  <li>자격증명 파일(.env·토큰)은 gitignore로 Git 완전 분리</li>
-  <li>노이즈 필터: DRM 임시파일·OAuth 콜백 URL·오피스 잠금파일 자동 제거</li>
-  <li>중복 제거: 동일 회의·동일 이벤트의 다중 수집 경로 정합성 유지</li>
-  <li>일시 파일 제거: created→deleted 쌍의 무의미 이벤트 정리</li>
-</ul>
-
   <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>4 / 6</span></div>
 </section>
 <section class="sph-page">
@@ -205,7 +200,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <thead><tr><th>기술</th><th>활용 방법</th><th>효과</th></tr></thead>
   <tbody>
     <tr><td><b>사내 DevX MCP</b><br>(sm-ops-pub-mcp)</td><td>Teams/메일 조회 도구 분석 → 동일한 위임권한 인증 방식을 Python으로 재구현</td><td>사내 표준 인증 체계 재활용, Azure 앱 등록 불필요</td></tr>
-    <tr><td><b>사내 LiteLLM 프록시</b><br>(gpt-4o-mini)</td><td>주간 본인 Teams 메시지 요약 · 파일 내용 요약(300자)</td><td>보고서를 단순 로그 나열이 아닌 의미 단위 요약으로</td></tr>
+    <tr><td><b>사내 LiteLLM 프록시</b><br>(haiku-4-5 · text-embedding-3-large)</td><td>Chat Completions로 소스별 텍스트 요약(Teams/메일/문서, 300자) + 임베딩 엔드포인트로 활동 벡터화 → 의미 클러스터링</td><td>보고서를 단순 로그 나열이 아닌 의미 단위 요약으로. 외부 API 키 없이 사내 프록시만으로 요약·임베딩 모두 해결</td></tr>
     <tr><td><b>Microsoft first-party 인증</b><br>(디바이스 로그인)</td><td>Microsoft Office 같은 자사 앱의 공용 인증 경로를 이용해, Azure에 별도 앱 등록·관리자 승인 없이 개인 로그인 1회만으로 Teams/일정 데이터 접근. 토큰은 자동 갱신</td><td>보안 정책상 막혀있던 앱 등록 절차를 우회, 누구든 본인 계정 로그인만으로 즉시 사용 가능</td></tr>
     <tr><td><b>AI 코딩 에이전트</b><br>(Claude Code/Devin)</td><td>프로젝트 설계·구현·테스트·문서화 전 과정을 에이전트 협업으로 개발</td><td>개발 속도 향상, 테스트·결정기록 자동 축적</td></tr>
     <tr><td><b>자체 MCP 개발</b></td><td>Slack 대화 조회 MCP를 devx-mcp.yaml 규격으로 제작, 사내 마켓플레이스 배포</td><td>사내 다른 사용자/에이전트가 재사용 가능한 자산화</td></tr>
@@ -217,7 +212,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <tbody>
     <tr>
       <td><b>임베딩 + VectorDB</b><br>(text-embedding-3-large)</td>
-      <td>모든 활동(채팅·파일·메일·방문)을 벡터로 변환해 벡터DB에 축적 → 유사도로 비슷한 의미의 활동끼리 자동 분류</td>
+      <td>활동(채팅·파일·메일·방문)을 벡터로 변환해 SQLite 벡터 테이블에 축적(재계산 없이 재사용) → 코사인 유사도로 비슷한 의미의 활동끼리 자동 분류 + LLM이 주제명 생성</td>
       <td>파일·채팅·브라우저에 흩어진 동일 작업이 "주제별"로 묶여 보고서 가독성 향상 · 주간 축적으로 "지난주 유사 작업" 검색</td>
     </tr>
     <tr>
@@ -260,7 +255,6 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
 <ul class="sph-list">
   <li><b>누락 제로</b> — 기억이 아닌 기록 기반으로 주간 활동을 완전 추적</li>
   <li><b>지식 자산화</b> — LLM이 요약한 활동이 주간 단위 DB로 축적, 회고·실적 정리에 재활용</li>
-  <li><b>팀 확산 가능</b> — 각자 본인 계정 로그인 1회로 동일 기능 사용, 결과물은 개인별 독립</li>
   <li><b>OS 제한 없는 제공</b> — Windows·macOS 어디서든 동일하게 동작. 감시 폴더·IDE 로그·Outlook 로그 위치가 OS마다 다른데 각각의 표준 경로를 자동 탐색하고, 앱 실행 감지·수집 방식도 플랫폼에 맞게 내부에서 자동 선택 — 사용자는 설치 후 버튼만 누르면 됨</li>
   <li><b>사내 AI 활용 사례</b> — MCP·LLM 프록시·OAuth의 실무 결합 레퍼런스로 기능</li>
 </ul>
