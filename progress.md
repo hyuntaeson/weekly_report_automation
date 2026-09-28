@@ -58,6 +58,12 @@
 - **1:1 채팅 이름 해석**: 멤버 목록→메시지 발신자 순으로 상대방 이름 추정("1:1 - 이름"). 외부 게스트 계정은 Graph가 이름을 안 주는 한계 있음("oneOnOne" 유지)
 - **GUI**: Active Work Sessions에 Outlook(outlook.exe/olk.exe), Word(winword.exe) 추가
 
+### 8. 보고용 개요 문서 + AI 적용 계획 수립
+- `weekly_report_automation_overview.html`: Spharos 사내 템플릿 스타일의 프로젝트 개요 보고서 생성 (목적/구조/구현요소/AI기술/기대효과, 진행상태 제외)
+- **사내 LiteLLM 프록시 임베딩 확인**: `azure/text-embedding-3-large`(dim 3072) 등 4개 임베딩 모델 + 다수 채팅 모델 이용 가능 → VectorDB/RAG/LCEL/LangGraph 전체 경로가 사내 인프라만으로 가능함을 검증
+- **다음 단계(사용자 승인)**: ① 임베딩+VectorDB 의미 클러스터링 → "주제별 작업" 보고서 섹션 ② LCEL 요약 체인 표준화 ③ LangGraph 보고서 생성 파이프라인 노드화
+- DRM 폴백 버그는 의도적 보류 — 암호화 문서 처리의 더 나은 방법을 검토 중
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)
