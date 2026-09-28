@@ -38,6 +38,9 @@ class WeeklyPulseApp:
         "Devin": ["devin.exe"],
         # 신형 Teams(ms-teams.exe) + 구형 클래식 Teams(Teams.exe) 둘 다 감지
         "Teams": ["ms-teams.exe", "teams.exe"],
+        # 클래식 Outlook(outlook.exe) + 신형 Outlook(olk.exe)
+        "Outlook": ["outlook.exe", "olk.exe"],
+        "Word": ["winword.exe"],
     }
 
     def is_app_running(self, process_names):
@@ -113,6 +116,8 @@ class WeeklyPulseApp:
             "Claude Code": {"icon": ft.Icons.PSYCHOLOGY, "last_active": "5 min ago"},
             "Devin": {"icon": ft.Icons.SMART_TOY, "last_active": "10 min ago"},
             "Teams": {"icon": ft.Icons.GROUPS, "last_active": "10 min ago"},
+            "Outlook": {"icon": ft.Icons.MAIL, "last_active": "10 min ago"},
+            "Word": {"icon": ft.Icons.DESCRIPTION, "last_active": "10 min ago"},
         }
         for app_name, app_data in self.tracked_apps.items():
             app_data["active"] = self.is_app_running(

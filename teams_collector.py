@@ -145,6 +145,47 @@ class TeamsCollector:
         self.token_file = token_file
         self._token = None
         self._me_name = None
+        self._member_cache = {}
+
+    def _chat_title(self, chat, me_name, messages=None):
+        """채팅 표시명. 1:1 채팅은 topic이 없어 멤버 목록 → 최근 메시지
+        발신자 순으로 상대방 이름을 추정한다 (상대가 게스트면 멤버 목록에 안 잡힘)."""
+        topic = chat.get("topic")
+        if topic:
+            return topic
+        if chat.get("chatType") == "oneOnOne":
+            members = self._chat_members(chat.get("id"))
+            others = [m for m in members if m != me_name]
+            if not others and messages:
+                others = []
+                for msg in messages:
+                    sender = (
+                        (msg.get("from") or {}).get("user") or {}
+                    ).get("displayName")
+                    if sender and sender != me_name and sender not in others:
+                        others.append(sender)
+            if others:
+                return "1:1 - " + ", ".join(others)
+        return chat.get("chatType") or "chat"
+
+    def _chat_members(self, chat_id):
+        """채팅방 멤버 displayName 목록 (수집 1회 실행 내 캐시)"""
+        if chat_id in self._member_cache:
+            return self._member_cache[chat_id]
+        names = []
+        try:
+            members = _graph_get(
+                self._token,
+                f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/members",
+            ).get("value", [])
+            for m in members:
+                name = m.get("displayName")
+                if name:
+                    names.append(name)
+        except Exception as e:
+            print(f"Warning: failed to fetch members for chat {chat_id}: {e}")
+        self._member_cache[chat_id] = names
+        return names
 
     def _me_display_name(self, access_token):
         """본인 표시이름 조회. 토큰 파일에 캐시해서 매번 /me를 안 부르게 함.
@@ -202,7 +243,6 @@ class TeamsCollector:
 
         for chat in chats:
             chat_id = chat.get("id")
-            title = chat.get("topic") or chat.get("chatType") or "chat"
             try:
                 messages = _graph_get(
                     access_token,
@@ -210,8 +250,9 @@ class TeamsCollector:
                     {"$top": 50},
                 ).get("value", [])
             except Exception as e:
-                print(f"Error reading messages for chat {title}: {e}")
+                print(f"Error reading messages for chat {chat_id}: {e}")
                 continue
+            title = self._chat_title(chat, me_name, messages)
 
             for msg in messages:
                 created = msg.get("createdDateTime", "")

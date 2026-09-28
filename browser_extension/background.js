@@ -27,7 +27,15 @@ const SENSITIVE_PATTERNS = [
   'twitter.com/login',
   'microsoft.com/oauth',
   'oauth',
-  'auth'
+  'auth',
+  // OAuth/SSO 콜백 URL - 인증 코드·세션 토큰이 쿼리에 들어가므로 보고서에 남기면 안 됨
+  '/callback',
+  'session_state',
+  'access_token',
+  'id_token',
+  'code=',
+  'sso-',
+  'saml'
 ];
 
 /**

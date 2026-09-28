@@ -64,28 +64,26 @@ class ReportGenerator:
             activities = db.get_activities_by_date_range(
                 resolved_week_start, resolved_week_end
             )
-            file_type_stats = db.get_file_type_stats(
-                resolved_week_start, resolved_week_end
-            )
-
-            span_days = max(
-                1,
-                (
-                    self._parse_date(resolved_week_end)
-                    - self._parse_date(resolved_week_start)
-                ).days
-                + 1,
-            )
-            daily_rows = db.get_daily_activity_count(span_days)
 
         activities = [a for a in activities if not self._is_noise_activity(a)]
         activities = self._dedupe_meetings(activities)
+        activities = self._drop_transient_files(activities)
+        activities = [self._normalize_activity_path(a) for a in activities]
 
+        # 파일 유형별/일별 통계도 노이즈 필터·중복제거가 적용된 동일 데이터 기준으로
+        # 집계해야 총계와 맞는다 (과거엔 DB 원시값을 써서 숫자가 어긋났음)
+        file_type_stats = [
+            {"file_type": ft, "action": ac, "count": n}
+            for (ft, ac), n in sorted(
+                Counter(
+                    (a.get("file_type") or "unknown", a.get("action") or "unknown")
+                    for a in activities
+                ).items(),
+                key=lambda kv: (-kv[1], kv[0]),
+            )
+        ]
         daily_counts = self._build_daily_counts(
-            resolved_week_start,
-            resolved_week_end,
-            daily_rows,
-            activities,
+            resolved_week_start, resolved_week_end, activities
         )
         by_source = self._sorted_counter(
             activity.get("source", "unknown") for activity in activities
@@ -317,21 +315,46 @@ class ReportGenerator:
             return start.strftime("%Y-%m-%d"), week_end
         return get_week_start_end()
 
-    def _build_daily_counts(self, week_start, week_end, daily_rows, activities):
+    def _drop_transient_files(self, activities):
+        """같은 기간 안에 created와 deleted가 모두 기록된 파일은 저장 후
+        남지 않는 일시 파일이므로 관련 활동 전부 제거한다 (DRM 임시파일 등)."""
+        created_paths, deleted_paths = set(), set()
+        for a in activities:
+            if a.get("source") != "filesystem":
+                continue
+            path = (a.get("file_path") or "").strip()
+            if a.get("action") == "created":
+                created_paths.add(path)
+            elif a.get("action") == "deleted":
+                deleted_paths.add(path)
+        transient = created_paths & deleted_paths
+        if not transient:
+            return activities
+        return [
+            a for a in activities
+            if not (
+                a.get("source") == "filesystem"
+                and (a.get("file_path") or "").strip() in transient
+            )
+        ]
+
+    def _normalize_activity_path(self, activity):
+        """file_path가 윈도 드라이브 경로면 '/'를 '\\'로 통일.
+        수집기마다 구분자가 섞여 있어 보고서 가독성이 떨어지는 것을 방지."""
+        path = activity.get("file_path")
+        if isinstance(path, str) and re.match(r"^[A-Za-z]:[\\/]", path):
+            activity = dict(activity)
+            activity["file_path"] = path.replace("/", "\\")
+        return activity
+
+    def _build_daily_counts(self, week_start, week_end, activities):
         start_date = self._parse_date(week_start)
         end_date = self._parse_date(week_end)
-        counts_by_date = {
-            row["date"]: row["count"]
-            for row in daily_rows
-            if week_start <= row.get("date", "") <= week_end
-        }
-
-        if not counts_by_date and activities:
-            counts_by_date = Counter(
-                activity.get("timestamp", "")[:10]
-                for activity in activities
-                if activity.get("timestamp")
-            )
+        counts_by_date = Counter(
+            activity.get("timestamp", "")[:10]
+            for activity in activities
+            if activity.get("timestamp")
+        )
 
         ordered_counts = []
         current = start_date
@@ -432,9 +455,17 @@ class ReportGenerator:
                 return path[len(prefix):].strip().lower()
         return path.strip().lower() or None
 
+    # 브라우저 URL 중 인증/세션 관련 URL (쿼리에 토큰·코드가 들어가 노출되면 안 됨)
+    SENSITIVE_URL_MARKERS = (
+        "/callback", "session_state", "access_token", "id_token", "code=",
+    )
+
     def _is_noise_activity(self, activity):
-        """오피스 임시/잠금 파일, DRM으로 깨진 파일명 등 사람이 봐도
-        의미 없는 항목인지 판단"""
+        """오피스 임시/잠금 파일, DRM으로 깨진 파일명, 인증 콜백 URL 등
+        사람이 봐도 의미 없거나 노출하면 안 되는 항목인지 판단"""
+        if activity.get("source") == "browser":
+            url = str(activity.get("file_path") or "").lower()
+            return any(marker in url for marker in self.SENSITIVE_URL_MARKERS)
         if activity.get("source") != "filesystem":
             return False
         file_path = str(activity.get("file_path") or "")

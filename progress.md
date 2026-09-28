@@ -50,6 +50,14 @@
 - **Teams 일정(캘린더) 수집**: `/me/calendarview`로 주간 일정 수집 — 회의 제목/참석자 명단/주최자/온라인 회의 여부 포함해 `source='teams'`, `action='meeting'`으로 저장. 취소된 회의(isCancelled)는 제외. Outlook(COM)으로 수집된 동일 회의와의 중복은 `report_generator._dedupe_meetings`가 제목 기준으로 제거(정보가 풍부한 teams 쪽 우선)
 - **배포 가이드**: README에 "다른 사용자에게 배포할 때" 섹션 추가 (1회 디바이스 코드 로그인 절차 + 주의사항)
 
+### 7. 실제 보고서 리뷰 후 개선 (같은 세션)
+- **OAuth 콜백 URL 차단**: background.js 필터에 `/callback`·`session_state`·`access_token`·`id_token`·`code=` 추가 + report 필터에도 동일 마커 적용(기존 DB 데이터까지 정화)
+- **집계 일관성**: daily_counts/by_file_type을 DB 원시값이 아닌 노이즈 필터·중복제거 적용된 activities 기준으로 집계 → 총계와 일치
+- **일시 파일 제거**: 같은 기간에 created+deleted가 모두 기록된 파일은 관련 이벤트 전부 제거 (DRM 임시파일 churn)
+- **경로 정규화**: 윈도 드라이브 경로의 `/` 구분자를 `\`로 통일
+- **1:1 채팅 이름 해석**: 멤버 목록→메시지 발신자 순으로 상대방 이름 추정("1:1 - 이름"). 외부 게스트 계정은 Graph가 이름을 안 주는 한계 있음("oneOnOne" 유지)
+- **GUI**: Active Work Sessions에 Outlook(outlook.exe/olk.exe), Word(winword.exe) 추가
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)
