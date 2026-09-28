@@ -47,14 +47,28 @@ def _post_form(url, data):
     return json.loads(urllib.request.urlopen(req, timeout=30).read())
 
 
-def _graph_get(access_token, path, params=None):
+def _graph_get(access_token, path, params=None, max_retries=3):
+    """Graph GET. 429(Too Many Requests)는 Retry-After/지수 백오프로 재시도."""
     url = GRAPH_BASE + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(
-        url, headers={"Authorization": f"Bearer {access_token}"}
-    )
-    return json.loads(urllib.request.urlopen(req, timeout=30).read())
+    last_err = None
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {access_token}"}
+        )
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=30).read())
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429 and attempt < max_retries - 1:
+                retry_after = e.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else 2.0 * (attempt + 1)
+                print(f"Warning: Graph 429, retrying in {wait:.0f}s")
+                time.sleep(wait)
+                continue
+            raise
+    raise last_err
 
 
 # ---------- 토큰 관리 ----------
@@ -154,7 +168,8 @@ class TeamsCollector:
         if topic:
             return topic
         if chat.get("chatType") == "oneOnOne":
-            members = self._chat_members(chat.get("id"))
+            chat_id = chat.get("id") or ""
+            members = self._chat_members(chat_id)
             others = [m for m in members if m != me_name]
             if not others and messages:
                 others = []
@@ -164,9 +179,46 @@ class TeamsCollector:
                     ).get("displayName")
                     if sender and sender != me_name and sender not in others:
                         others.append(sender)
+            if not others:
+                # 외부/게스트 계정은 members·messages에서 이름이 안 잡히는 경우가 있어
+                # chat id 속 상대방 GUID를 /me/people(주소록)에서 조회해 매칭한다
+                name = self._resolve_oneonone_partner(chat_id, me_name)
+                if name:
+                    others.append(name)
             if others:
                 return "1:1 - " + ", ".join(others)
         return chat.get("chatType") or "chat"
+
+    def _resolve_oneonone_partner(self, chat_id, me_name):
+        """1:1 채팅 상대방 이름 해석. chat id 형식 `19:{guid}_{guid}@unq.gbl.spaces`
+        에서 상대 GUID를 뽑아 /me/people 목록에서 id 매칭으로 displayName 조회.
+        /users/{id}는 사내 권한(User.Read.All) 부재로 404이므로 우회."""
+        match = re.match(r"19:([0-9a-fA-F-]{36})_([0-9a-fA-F-]{36})@", chat_id)
+        if not match:
+            return None
+        guids = {match.group(1).lower(), match.group(2).lower()}
+        try:
+            me = _graph_get(self._token, "/me", {"$select": "id"})
+            my_id = (me.get("id") or "").lower()
+            partner_guids = guids - {my_id}
+            if not partner_guids:
+                return None
+        except Exception:
+            partner_guids = guids
+
+        try:
+            people = _graph_get(
+                self._token, "/me/people", {"$top": 100}
+            ).get("value", [])
+        except Exception as e:
+            print(f"Warning: /me/people lookup failed: {e}")
+            return None
+        for person in people:
+            if (person.get("id") or "").lower() in partner_guids:
+                name = person.get("displayName")
+                if name and name != me_name:
+                    return name
+        return None
 
     def _chat_members(self, chat_id):
         """채팅방 멤버 displayName 목록 (수집 1회 실행 내 캐시)"""

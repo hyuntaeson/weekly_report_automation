@@ -424,9 +424,8 @@ def t_flet_import():
 
 def t_process_detect():
     from modern_gui import WeeklyPulseApp
-    # is_app_running은 인스턴스 메서드지만 self 미사용 → 클래스로 호출
     for proc in ["chrome.exe", "winword.exe", "Code.exe", "powershell.exe"]:
-        if WeeklyPulseApp.is_app_running(None, [proc]):
+        if WeeklyPulseApp.is_app_running([proc]):
             return ok(f"{proc} 감지됨")
     return ok("감지 대상 프로세스 없음 (로직 실행 정상)")
 

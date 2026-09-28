@@ -23,7 +23,7 @@ class OutlookCollector:
     """Collector for Outlook activities.
 
     Windows: 로컬 Outlook COM으로 수집.
-    macOS/Linux(COM 없음): teams_collector의 Graph 위임 토큰으로
+    COM 연결 실패(미실행/비Windows) 시: teams_collector의 Graph 위임 토큰으로
     메일(Inbox/SentItems)을 수집한다. 캘린더는 teams_collector가 이미
     Graph로 수집하므로 여기서는 메일만 다룬다.
     """
@@ -106,14 +106,13 @@ class OutlookCollector:
         return activities
     
     def collect_email_activity(self, days=7):
-        """Collect email activity from the last N days"""
+        """Collect email activity from the last N days.
+        COM 연결 실패 시(미실행/비Windows) Graph 경로로 폴백."""
         if not self.connect_outlook():
-            if not _WIN32COM_AVAILABLE:
-                return self._collect_mail_via_graph(
-                    days, "Inbox", "email_received", "Email",
-                    "sender", "from"
-                )
-            return []
+            return self._collect_mail_via_graph(
+                days, "Inbox", "email_received", "Email",
+                "sender", "from"
+            )
         
         activities = []
         
@@ -155,14 +154,13 @@ class OutlookCollector:
         return activities
     
     def collect_sent_email_activity(self, days=7):
-        """Collect sent email activity from the last N days"""
+        """Collect sent email activity from the last N days.
+        COM 연결 실패 시(미실행/비Windows) Graph 경로로 폴백."""
         if not self.connect_outlook():
-            if not _WIN32COM_AVAILABLE:
-                return self._collect_mail_via_graph(
-                    days, "SentItems", "email_sent", "Sent",
-                    "recipients", "toRecipients"
-                )
-            return []
+            return self._collect_mail_via_graph(
+                days, "SentItems", "email_sent", "Sent",
+                "recipients", "toRecipients"
+            )
         
         activities = []
         

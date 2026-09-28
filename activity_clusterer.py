@@ -15,6 +15,7 @@ import os
 
 import requests
 
+from database import ActivityDatabase
 from llm_summarizer import LLMSummarizer, PROMPT_TEMPLATES
 
 EMBEDDING_MODEL = "azure/text-embedding-3-large"
@@ -103,6 +104,42 @@ class ActivityClusterer:
 
     # ---------- 클러스터링 ----------
 
+    def _embed_with_cache(self, activities, texts):
+        """활동별 임베딩을 SQLite 캐시와 함께 조회.
+        저장된 벡터는 재사용하고 없는 것만 API 호출 → 주차를 거듭할수록
+        누적돼 과거 활동과의 유사 검색(RAG) 기반이 된다."""
+        keys = [ActivityDatabase.activity_key(a) for a in activities]
+        cached = {}
+        try:
+            with ActivityDatabase() as db:
+                cached = db.get_embeddings(keys)
+        except Exception as e:
+            print(f"Warning: embedding cache read failed: {e}")
+
+        vectors = [None] * len(activities)
+        missing = []
+        for i, key in enumerate(keys):
+            entry = cached.get(key)
+            if entry and entry[0] == texts[i]:
+                vectors[i] = entry[1]
+            elif texts[i]:
+                missing.append(i)
+
+        if missing:
+            new_vecs = self._embed([texts[i] for i in missing])
+            if not new_vecs:
+                return None
+            to_save = []
+            for i, vec in zip(missing, new_vecs):
+                vectors[i] = vec
+                to_save.append((keys[i], texts[i], vec))
+            try:
+                with ActivityDatabase() as db:
+                    db.save_embeddings(to_save)
+            except Exception as e:
+                print(f"Warning: embedding cache write failed: {e}")
+        return vectors
+
     def cluster_activities(self, activities, threshold=SIMILARITY_THRESHOLD):
         """활동 목록을 의미 유사도로 클러스터링.
         반환: [{"items": [activity...], "centroid": vec}, ...] 건수 내림차순.
@@ -111,9 +148,10 @@ class ActivityClusterer:
             return []
         texts = [self._activity_text(a) for a in activities]
         keep = [i for i, t in enumerate(texts) if t]
-        vectors = self._embed([texts[i] for i in keep])
-        if not vectors:
+        all_vectors = self._embed_with_cache(activities, texts)
+        if not all_vectors:
             return []
+        vectors = [all_vectors[i] for i in keep]
 
         clusters = []
         for idx, vec in zip(keep, vectors):

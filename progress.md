@@ -91,6 +91,18 @@
 - `requirements.txt`: `pywin32`를 `sys_platform == 'win32'` 조건부로
 - macOS 실기 검증 필요: GUI 기동, Graph 디바이스 로그인, Outlook 메일 수집 동작 여부
 
+### 13. 시나리오 테스트 스위트 + 보완 패치 (완료)
+- `scenario_test.py` 신규: 32개 기능 시나리오(환경/수집/가공/AI/보고서/GUI) 실행 → `test_reports/`에 스타일된 Excel(결과+요약 시트) 자동 생성
+- 보완 패치 적용:
+  - Graph API 429 → Retry-After 기반 백오프 재시도 (실제 429 발생해 자동 복구 확인)
+  - Outlook 수집: COM 실패 시 Graph 경로로 폴백 — Windows에서도 동일 적용 (플랫폼·실행 상태 무관)
+  - 임베딩 영속화: `activity_embeddings` 테이블 추가, 활동 벡터 캐시 → 2회차 실행 22.6s→3.3s, 과거 활동 유사검색 기반 확보
+  - 1:1 채팅 상대방 해석에 `/me/people` 매칭 추가 — GUID만 잡히던 외부 계정도 실명 해석 (8개 중 6개 성공)
+  - 빈 주간 보고서 하이라이트에 "활동 없음" 명시
+  - `is_app_running`을 `@staticmethod`로
+  - `cleanup_data.py` 신규: data/ 테스트 산출물 정리 유틸 (dry-run 기본, --yes로 실행)
+- 테스트 결과: PASS 31 / FAIL 0 / SKIP 1 (브라우저 서버는 트래킹 OFF라 정상 SKIP)
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)

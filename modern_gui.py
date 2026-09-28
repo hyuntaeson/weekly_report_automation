@@ -53,7 +53,8 @@ class WeeklyPulseApp:
         "Word": ["winword.exe", "Microsoft Word"],
     }
 
-    def is_app_running(self, process_names):
+    @staticmethod
+    def is_app_running(process_names):
         """지정된 프로세스 이름 중 하나가, 눈에 보이는 창을 가지고 실행 중인지 확인.
 
         단순 프로세스 존재 여부(psutil)만 보면 Slack 같은 Electron 앱은 창을

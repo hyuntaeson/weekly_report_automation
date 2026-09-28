@@ -9,9 +9,11 @@
 {% endif %}
 
 ## 주요 하이라이트
-{% for highlight in highlights %}
+{% if highlights %}{% for highlight in highlights %}
 - {{ highlight }}
-{% endfor %}
+{% endfor %}{% else %}
+- 해당 주간에 기록된 활동이 없습니다.
+{% endif %}
 
 {% if topics %}
 ## 주제별 작업 (AI 분석)
