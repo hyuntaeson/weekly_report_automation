@@ -44,6 +44,12 @@ class FileActivityHandler(FileSystemEventHandler):
         self.exclude_patterns.append('*.part')
         self.exclude_patterns.append('*.lock')
         self.exclude_patterns.append('.git')
+        # report_generator.NOISE_FILENAME_PATTERNS와 동일 규칙 유지:
+        # 오피스 잠금파일(~$*), 임시파일(*.tmp, *.cache), LibreOffice 잠금(.~lock.*)
+        self.exclude_patterns.append('~$*')
+        self.exclude_patterns.append('*.tmp')
+        self.exclude_patterns.append('*.cache')
+        self.exclude_patterns.append('.~lock.*')
         self.db_path = db_path
         self.db = None  # Will be created per thread
         self.summarizer = LLMSummarizer()
@@ -332,6 +338,7 @@ class FileWatcher:
         self.db_path = db_path
         self.observer = Observer()
         self.handler = None
+        self._running = False
         
         # Ensure log directory exists
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
@@ -348,17 +355,19 @@ class FileWatcher:
                 print(f"Warning: Path does not exist: {path}")
         
         self.observer.start()
+        self._running = True
         print(f"File watcher started. Monitoring {len(self.watch_paths)} directory/directories.")
         print("Press Ctrl+C to stop...")
-        
+
         try:
-            while True:
+            while self._running:
                 time.sleep(1)
         except KeyboardInterrupt:
             self.stop()
     
     def stop(self):
         """Stop watching directories"""
+        self._running = False
         self.observer.stop()
         self.observer.join()
         print("\nFile watcher stopped.")

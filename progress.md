@@ -31,6 +31,15 @@
 - 노이즈 필터 예시 2개 + 정상 파일 1개 별도 스크립트로 필터링 결과 확인
 - 실제 DRM 걸린 xlsx 파일로 fallback 메시지 확인
 
+### 4. 소소한 개선 묶음 (세션 인계 후 Devin 세션)
+- **watcher/report 노이즈 규칙 비대칭 해소**: `~$*`, `*.tmp`, `*.cache`, `.~lock.*`가 `report_generator.NOISE_FILENAME_PATTERNS`에만 있고 `file_watcher` 기본 제외 패턴에는 없어서 config에 의존하던 문제 → watcher 기본 패턴에도 동일 규칙 추가
+- **FileWatcher 스레드 누수 수정**: `start()`의 `while True: sleep(1)` 루프가 `stop_tracking()` 이후에도 계속 살아있어 재시작 때마다 스레드가 누적되던 문제 → `_running` 플래그로 종료되도록 수정 (daemon 스레드라 실해는 없었지만 클린업 목적)
+- **검증**: 별도 스크립트로 `~$report.docx`/`plain.tmp` 필터링 및 stop() 후 스레드 종료 확인, `test_all_completed.py` 9/9 재통과
+
+### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
+- **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
+- **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)
+
 ## 🎯 다음 할 일
 
 ### 최우선
