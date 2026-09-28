@@ -69,7 +69,16 @@
 - 클러스터명은 LLM이 대표 활동들을 보고 20자 주제명으로 생성 — 실측 결과 "신세계 개발 플랫폼 접근", "이마트24 POS 시스템 정기 점검", "POS서버 DB 접근 문제 해결" 등 정확한 주제 분류 확인
 - `llm_summarizer.py`: 요약 전용 외에 범용 `complete(system_prompt, text)` 메서드 추가
 - 보고서 Markdown/Word 양쪽에 "주제별 작업 (AI 분석)" 섹션 추가. LLM/임베딩 실패 시 섹션 생략 (폴백)
-- 다음 단계 잔여: ② LCEL 요약 체인 표준화 ③ LangGraph 파이프라인
+### 10. AI 적용 2단계: LCEL 요약 체인 표준화 (완료)
+- `llm_summarizer.py`를 LangChain LCEL(`prompt | ChatOpenAI | StrOutputParser`)로 재작성 — 프록시가 OpenAI 호환이라 `base_url` 지정만으로 연결
+- `PROMPT_TEMPLATES`에 소스별 프롬프트 분리: default/file/teams/mail/topic — `summarize(text, template="...")`로 선택
+- 체인 내장 `with_retry(2회)`, 모델/프롬프트는 config·템플릿만 바꾸면 됨
+- LangChain 미설치 환경에서는 기존처럼 None 반환 폴백 (선택 의존성)
+- 호출자 연결: file_watcher→"file", outlook→"mail", teams 요약→"teams", 클러스터 명명→"topic"
+- 의존성 추가: langchain-core 1.6.5, langchain-openai 1.6.6
+- 잔여: ③ LangGraph 파이프라인
+
+### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)

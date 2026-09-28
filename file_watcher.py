@@ -142,7 +142,7 @@ class FileActivityHandler(FileSystemEventHandler):
         if not added_lines:
             return None
         added = joiner.join(added_lines)
-        summary = self.summarizer.summarize(added) or added[:300]
+        summary = self.summarizer.summarize(added, template="file") or added[:300]
         return {'content_added': added[:2000], 'summary': summary}
 
     def _drm_blocked_details(self):
@@ -277,7 +277,7 @@ class FileActivityHandler(FileSystemEventHandler):
         if not added:
             return None
 
-        summary = self.summarizer.summarize(added) or added[:300]
+        summary = self.summarizer.summarize(added, template="file") or added[:300]
         return {'content_added': added[:2000], 'summary': summary}
 
     def log_activity(self, action, file_path, details=None):

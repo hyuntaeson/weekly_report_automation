@@ -424,7 +424,9 @@ class ReportGenerator:
 
         try:
             from llm_summarizer import LLMSummarizer
-            summary = LLMSummarizer().summarize("\n".join(texts), max_len=600)
+            summary = LLMSummarizer().summarize(
+                "\n".join(texts), max_len=600, template="teams"
+            )
         except Exception as e:
             print(f"Warning: Teams message summarization failed: {e}")
             summary = None

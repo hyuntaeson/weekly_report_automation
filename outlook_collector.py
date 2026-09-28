@@ -144,7 +144,7 @@ class OutlookCollector:
             return ''
         collapsed = ' '.join(str(text).split())
 
-        llm_summary = self.summarizer.summarize(collapsed)
+        llm_summary = self.summarizer.summarize(collapsed, template="mail")
         if llm_summary:
             return llm_summary
 

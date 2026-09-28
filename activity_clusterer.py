@@ -15,7 +15,7 @@ import os
 
 import requests
 
-from llm_summarizer import LLMSummarizer
+from llm_summarizer import LLMSummarizer, PROMPT_TEMPLATES
 
 EMBEDDING_MODEL = "azure/text-embedding-3-large"
 # 코사인 유사도가 이 값 이상이면 같은 주제로 묶는다 (0~1, 높을수록 엄격)
@@ -140,9 +140,7 @@ class ActivityClusterer:
         texts = [self._activity_text(a) for a in items[:MAX_CLUSTER_ITEMS_FOR_NAMING]]
         joined = "\n".join(f"- {t}" for t in texts if t)
         name = self.summarizer.complete(
-            "다음은 한 주간의 업무 활동 목록이야. 이 활동들을 하나로 묶는 "
-            "주제명을 20자 이내 한국어 명사구로 붙여줘. 주제명만 출력하고 "
-            "설명·따옴표·불릿은 붙이지 마.",
+            PROMPT_TEMPLATES["topic"],
             joined,
             max_tokens=40,
             temperature=0.2,
