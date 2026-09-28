@@ -47,6 +47,7 @@
 - **GUI Active Work Sessions에 Teams 추가**: `ms-teams.exe`(신형)/`teams.exe`(구형) 양쪽 감지
 - **본인 메시지 식별**: 수집 시 `/me`로 displayName 조회→토큰 파일에 `me_display_name` 캐시, details에 `from_me` 플래그 (실제 로그인 계정: "손현태(이마트24 POS서버)")
 - **주간보고서 "Teams 내 메시지 요약" 섹션 신설**: 주간 Teams 메시지 중 본인 발신만 골라 LLM 요약해서 표시 (Markdown+Word 양쪽). 본인 발신 메시지 상세 목록에도 메시지 본문(text)이 나오도록 `_extract_summary` 확장
+- **Teams 일정(캘린더) 수집**: `/me/calendarview`로 주간 일정 수집 — 회의 제목/참석자 명단/주최자/온라인 회의 여부 포함해 `source='teams'`, `action='meeting'`으로 저장. 취소된 회의(isCancelled)는 제외. Outlook(COM)으로 수집된 동일 회의와의 중복은 `report_generator._dedupe_meetings`가 제목 기준으로 제거(정보가 풍부한 teams 쪽 우선)
 - **배포 가이드**: README에 "다른 사용자에게 배포할 때" 섹션 추가 (1회 디바이스 코드 로그인 절차 + 주의사항)
 
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)

@@ -79,6 +79,7 @@ class ReportGenerator:
             daily_rows = db.get_daily_activity_count(span_days)
 
         activities = [a for a in activities if not self._is_noise_activity(a)]
+        activities = self._dedupe_meetings(activities)
 
         daily_counts = self._build_daily_counts(
             resolved_week_start,
@@ -391,6 +392,45 @@ class ReportGenerator:
             print(f"Warning: Teams message summarization failed: {e}")
             summary = None
         return {"count": len(texts), "summary": summary or ""}
+
+    def _dedupe_meetings(self, activities):
+        """같은 회의가 Outlook(COM)과 Teams(Graph) 양쪽으로 수집된 경우
+        참석자 정보가 풍부한 Teams 쪽만 남긴다. 제목 기준으로 비교
+        (타임스탬프는 Outlook=로컬, Graph=UTC라 단순비교 불가)."""
+        teams_subjects = set()
+        for activity in activities:
+            if activity.get("source") != "teams" or activity.get("action") != "meeting":
+                continue
+            subject = self._meeting_subject(activity)
+            if subject:
+                teams_subjects.add(subject)
+        if not teams_subjects:
+            return activities
+        return [
+            a for a in activities
+            if not (
+                a.get("source") == "outlook"
+                and a.get("action") == "meeting"
+                and self._meeting_subject(a) in teams_subjects
+            )
+        ]
+
+    def _meeting_subject(self, activity):
+        """활동에서 회의 제목을 정규화해서 반환 (details.subject 우선,
+        없으면 file_path에서 '회의:'/'Meeting:' 프리픽스 제거)."""
+        details = activity.get("details")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except (TypeError, ValueError):
+                details = None
+        if isinstance(details, dict) and details.get("subject"):
+            return str(details["subject"]).strip().lower()
+        path = str(activity.get("file_path") or "")
+        for prefix in ("Teams 회의:", "Teams Meeting:", "회의:", "Meeting:"):
+            if path.startswith(prefix):
+                return path[len(prefix):].strip().lower()
+        return path.strip().lower() or None
 
     def _is_noise_activity(self, activity):
         """오피스 임시/잠금 파일, DRM으로 깨진 파일명 등 사람이 봐도

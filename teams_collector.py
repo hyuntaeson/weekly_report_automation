@@ -221,6 +221,84 @@ class TeamsCollector:
                 if activity:
                     activities.append(activity)
 
+        activities.extend(self.collect_calendar_events(days))
+        return activities
+
+    def collect_calendar_events(self, days=7):
+        """Graph /me/calendarview로 최근 N일 + 내일까지의 일정을 수집.
+        참석자 목록·온라인 회의 여부 포함 — Outlook COM 수집보다 정보가
+        풍부하므로 회의 관련은 이쪽이 기준(source='teams')."""
+        access_token = self._token or get_access_token(self.token_file)
+        if not access_token:
+            return []
+        self._token = access_token
+
+        now = datetime.now(timezone.utc)
+        start = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end = (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        try:
+            events = _graph_get(
+                access_token, "/me/calendarview",
+                {
+                    "startDateTime": start,
+                    "endDateTime": end,
+                    "$top": 100,
+                    "$select": "subject,start,end,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,location,isCancelled",
+                    "$orderby": "start/dateTime",
+                },
+            ).get("value", [])
+        except Exception as e:
+            print(f"Error collecting Teams calendar: {e}")
+            return []
+
+        activities = []
+        for ev in events:
+            if ev.get("isCancelled"):
+                continue
+            subject = (ev.get("subject") or "(no subject)").strip()
+            attendees = [
+                a.get("emailAddress", {}).get("name")
+                for a in ev.get("attendees", [])
+            ]
+            attendees = [n for n in attendees if n]
+            is_online = bool(ev.get("isOnlineMeeting"))
+            start_dt = (ev.get("start") or {}).get("dateTime") or now.isoformat()
+            organizer = (
+                (ev.get("organizer") or {}).get("emailAddress") or {}
+            ).get("name")
+            location = (ev.get("location") or {}).get("displayName")
+
+            shown = attendees[:10]
+            summary = ""
+            if attendees:
+                summary = f"참석자: {', '.join(shown)}"
+                if len(attendees) > len(shown):
+                    summary += f" 외 {len(attendees) - len(shown)}명"
+            if organizer:
+                summary = (summary + " | " if summary else "") + f"주최: {organizer}"
+
+            activities.append(
+                {
+                    "timestamp": start_dt,
+                    "action": "meeting",
+                    "file_path": f"{'Teams 회의' if is_online else '회의'}: {subject}",
+                    "file_type": "calendar",
+                    "source": "teams",
+                    "details": json.dumps(
+                        {
+                            "subject": subject,
+                            "attendees": attendees[:15],
+                            "attendee_count": len(attendees),
+                            "organizer": organizer,
+                            "is_online_meeting": is_online,
+                            "location": location,
+                            "summary": summary,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
         return activities
 
     def _message_to_activity(self, msg, chat_title, me_name=None):
