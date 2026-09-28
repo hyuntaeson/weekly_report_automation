@@ -124,6 +124,16 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <li><b>AI 요약이 포함된 보고서</b> — Markdown·Word 2종 산출</li>
   <li><b>다른 사용자도 사용 가능</b> — 개인 자격증명만 교체하면 되는 배포 구조</li>
 </ul>
+<h2 class="sph-section-title">왜 웹이 아닌 로컬 프로그램인가</h2>
+<p style="margin-bottom:var(--sp-3);">수집 대상이 전부 <b>내 PC 안에 있기 때문</b>에, 로컬에서 실행되는 프로그램 형태가 필수입니다.</p>
+<ul class="sph-list">
+  <li><b>로컬 파일 실시간 감시</b> — Documents/Downloads 등 폴더를 백그라운드에서 감시하는 것은 웹 앱이 접근할 수 없는 영역</li>
+  <li><b>Outlook COM 연동</b> — 로컬 Outlook의 메일함을 직접 조회하는 것은 같은 PC의 프로세스만 가능</li>
+  <li><b>프로세스 감지</b> — "지금 VS Code·Teams가 실행 중인가"를 확인해 작업 세션을 기록하는 것도 로컬에서만 가능</li>
+  <li><b>로컬 토큰 보관</b> — 회사 인증 토큰을 외부 서버에 올리지 않고 본인 PC에만 저장</li>
+  <li><b>브라우저 확장 → localhost</b> — Chrome 확장이 방문 기록을 로컬 서버(`127.0.0.1`)로내므로, 수신 서버가 내 PC에 있어야 함</li>
+  <li><b>사내 보안 정책</b> — 업무 파일 경로·메일·채팅 기록이 회사 밖 서버로 나가지 않아 데이터 유출 우려 없음</li>
+</ul>
 
   <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>2 / 6</span></div>
 </section>
