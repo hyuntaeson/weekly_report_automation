@@ -96,6 +96,7 @@ class ReportGenerator:
         ai_tool_sessions = sum(
             1 for activity in activities if activity.get("source") == "claude_code"
         )
+        teams_my = self._summarize_my_teams_messages(activities)
         recent_activities = activities[-20:]
         activities_by_action = self._group_activities_by_action(activities)
 
@@ -111,6 +112,8 @@ class ReportGenerator:
             "daily_counts": daily_counts,
             "top_projects_or_files": top_projects_or_files,
             "ai_tool_sessions": ai_tool_sessions,
+            "teams_my_message_count": teams_my["count"],
+            "teams_my_summary": teams_my["summary"],
             "raw_activities": recent_activities,
             "raw_activity_total": len(activities),
             "highlights": self._build_highlights(
@@ -162,6 +165,19 @@ class ReportGenerator:
                 document.add_paragraph(
                     f"AI 코딩 관련 활동은 {weekly_data['ai_tool_sessions']}건입니다."
                 )
+
+            if weekly_data.get("teams_my_message_count"):
+                self._add_section_title(document, "Teams 내 메시지 요약")
+                document.add_paragraph(
+                    f"이번 주 Teams에서 내가 보낸 메시지 "
+                    f"{weekly_data['teams_my_message_count']}건을 요약했습니다."
+                )
+                if weekly_data.get("teams_my_summary"):
+                    document.add_paragraph(weekly_data["teams_my_summary"])
+                else:
+                    document.add_paragraph(
+                        "(AI 요약을 사용할 수 없어 건수만 표시합니다.)"
+                    )
 
             self._add_summary_table(
                 document, "소스별 활동", weekly_data["by_source"], ("소스", "건수")
@@ -330,6 +346,52 @@ class ReportGenerator:
         counter = Counter(value or "unknown" for value in values)
         return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
 
+    def _summarize_my_teams_messages(self, activities):
+        """이번 주 Teams 메시지 중 '내가 보낸' 것만 골라 LLM으로 요약.
+
+        판별 기준: details.sender가 teams_graph_token.json의 me_display_name과
+        일치하는 메시지 (신규 수집분은 details.from_me 플래그도 있지만,
+        과거 데이터 호환을 위해 sender 비교를 우선 사용)."""
+        token_file = self.base_dir / "config" / "teams_graph_token.json"
+        me_name = None
+        try:
+            with open(token_file, encoding="utf-8") as f:
+                me_name = json.load(f).get("me_display_name")
+        except (OSError, json.JSONDecodeError):
+            pass
+        if not me_name:
+            return {"count": 0, "summary": ""}
+
+        texts = []
+        for activity in activities:
+            if activity.get("source") != "teams":
+                continue
+            details = activity.get("details")
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if not isinstance(details, dict):
+                continue
+            sender = details.get("sender")
+            if details.get("from_me") or (me_name and sender == me_name):
+                text = (details.get("text") or "").strip()
+                if text:
+                    chat = details.get("chat") or ""
+                    texts.append(f"[{chat}] {text}" if chat else text)
+
+        if not texts:
+            return {"count": 0, "summary": ""}
+
+        try:
+            from llm_summarizer import LLMSummarizer
+            summary = LLMSummarizer().summarize("\n".join(texts), max_len=600)
+        except Exception as e:
+            print(f"Warning: Teams message summarization failed: {e}")
+            summary = None
+        return {"count": len(texts), "summary": summary or ""}
+
     def _is_noise_activity(self, activity):
         """오피스 임시/잠금 파일, DRM으로 깨진 파일명 등 사람이 봐도
         의미 없는 항목인지 판단"""
@@ -398,7 +460,8 @@ class ReportGenerator:
             except (TypeError, ValueError):
                 return ""
         if isinstance(details, dict):
-            return str(details.get("summary") or "")
+            # Teams 메시지는 summary가 없고 text가 본문이므로 함께 확인
+            return str(details.get("summary") or details.get("text") or "")
         return ""
 
     def _top_paths(self, activities, limit=5):

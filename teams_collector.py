@@ -144,6 +144,38 @@ class TeamsCollector:
         self.db_path = db_path
         self.token_file = token_file
         self._token = None
+        self._me_name = None
+
+    def _me_display_name(self, access_token):
+        """본인 표시이름 조회. 토큰 파일에 캐시해서 매번 /me를 안 부르게 함.
+        보고서 생성기가 '내가 보낸 메시지'를 구분할 때도 이 값을 사용."""
+        if self._me_name:
+            return self._me_name
+        try:
+            with open(self.token_file, encoding="utf-8") as f:
+                cached = json.load(f).get("me_display_name")
+            if cached:
+                self._me_name = cached
+                return cached
+        except (OSError, json.JSONDecodeError):
+            pass
+        try:
+            me = _graph_get(access_token, "/me", {"$select": "displayName"})
+            name = me.get("displayName")
+        except Exception as e:
+            print(f"Warning: failed to fetch /me displayName: {e}")
+            return None
+        if name:
+            self._me_name = name
+            try:
+                with open(self.token_file, encoding="utf-8") as f:
+                    token = json.load(f)
+                token["me_display_name"] = name
+                with open(self.token_file, "w", encoding="utf-8") as f:
+                    json.dump(token, f, indent=2)
+            except (OSError, json.JSONDecodeError):
+                pass
+        return name
 
     @property
     def enabled(self):
@@ -156,6 +188,7 @@ class TeamsCollector:
             return []
         self._token = access_token
 
+        me_name = self._me_display_name(access_token)
         since = (
             datetime.now(timezone.utc) - timedelta(days=days)
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -184,13 +217,13 @@ class TeamsCollector:
                 created = msg.get("createdDateTime", "")
                 if created < since:
                     continue
-                activity = self._message_to_activity(msg, title)
+                activity = self._message_to_activity(msg, title, me_name)
                 if activity:
                     activities.append(activity)
 
         return activities
 
-    def _message_to_activity(self, msg, chat_title):
+    def _message_to_activity(self, msg, chat_title, me_name=None):
         """Graph message 객체를 activities 테이블 포맷으로 변환"""
         sender = ((msg.get("from") or {}).get("user") or {}).get("displayName") or "Unknown"
         body_html = (msg.get("body") or {}).get("content") or ""
@@ -211,6 +244,8 @@ class TeamsCollector:
                     "sender": sender,
                     "text": text[:300],
                     "message_type": msg.get("messageType"),
+                    # 주간보고서에서 '내가 보낸 메시지'만 골라 요약할 때 사용
+                    "from_me": bool(me_name and sender == me_name),
                 },
                 ensure_ascii=False,
             ),

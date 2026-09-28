@@ -36,6 +36,8 @@ class WeeklyPulseApp:
         "Chrome": ["chrome.exe"],
         "Claude Code": ["claude.exe"],
         "Devin": ["devin.exe"],
+        # 신형 Teams(ms-teams.exe) + 구형 클래식 Teams(Teams.exe) 둘 다 감지
+        "Teams": ["ms-teams.exe", "teams.exe"],
     }
 
     def is_app_running(self, process_names):
@@ -110,6 +112,7 @@ class WeeklyPulseApp:
             "Chrome": {"icon": ft.Icons.LANGUAGE, "last_active": "now"},
             "Claude Code": {"icon": ft.Icons.PSYCHOLOGY, "last_active": "5 min ago"},
             "Devin": {"icon": ft.Icons.SMART_TOY, "last_active": "10 min ago"},
+            "Teams": {"icon": ft.Icons.GROUPS, "last_active": "10 min ago"},
         }
         for app_name, app_data in self.tracked_apps.items():
             app_data["active"] = self.is_app_running(

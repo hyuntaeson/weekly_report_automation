@@ -13,6 +13,18 @@
 - {{ highlight }}
 {% endfor %}
 
+{% if teams_my_message_count > 0 %}
+## Teams 내 메시지 요약
+이번 주 Teams에서 내가 보낸 메시지 {{ teams_my_message_count }}건을 요약했습니다.
+{% if teams_my_summary %}
+
+{{ teams_my_summary }}
+{% else %}
+
+- (AI 요약을 사용할 수 없어 건수만 표시합니다.)
+{% endif %}
+{% endif %}
+
 ## 소스별 활동
 {% if by_source %}{% for source, count in by_source.items() %}
 - {{ source }}: {{ count }}건

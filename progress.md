@@ -43,6 +43,12 @@
 - `integrated_collector.py`: Teams 수집 루프(30분 주기) 연결 + 기존 `stop()`의 `file_watcher.stop()` 중복 호출 버그 정리
 - 최초 로그인/재로그인: `python teams_collector.py --login`
 
+### 6. Teams 후속 개선 (같은 세션)
+- **GUI Active Work Sessions에 Teams 추가**: `ms-teams.exe`(신형)/`teams.exe`(구형) 양쪽 감지
+- **본인 메시지 식별**: 수집 시 `/me`로 displayName 조회→토큰 파일에 `me_display_name` 캐시, details에 `from_me` 플래그 (실제 로그인 계정: "손현태(이마트24 POS서버)")
+- **주간보고서 "Teams 내 메시지 요약" 섹션 신설**: 주간 Teams 메시지 중 본인 발신만 골라 LLM 요약해서 표시 (Markdown+Word 양쪽). 본인 발신 메시지 상세 목록에도 메시지 본문(text)이 나오도록 `_extract_summary` 확장
+- **배포 가이드**: README에 "다른 사용자에게 배포할 때" 섹션 추가 (1회 디바이스 코드 로그인 절차 + 주의사항)
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)

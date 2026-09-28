@@ -166,6 +166,18 @@ python test_all_completed.py
 ### file_stats 테이블
 - 파일 타입별 통계 데이터
 
+## 👥 다른 사용자에게 배포할 때
+
+각 사용자가 본인 PC에서 1회만 수행하면 되는 설정:
+
+1. `pip install -r requirements.txt`
+2. **Teams 로그인**: `python teams_collector.py --login` 실행 → 화면에 표시되는 코드를 https://login.microsoft.com/device 에 입력 (본인 회사 MS 계정). 완료되면 `config/teams_graph_token.json`이 생성되고, 이후에는 refresh_token으로 자동 갱신되어 재로그인 불필요
+3. **Chrome 확장**: `chrome://extensions` → 개발자 모드 → `browser_extension` 폴더 로드
+4. `config/watch_config.json`의 `watch_paths`를 본인 작업 폴더로 수정
+5. Slack/Confluence/LiteLLM을 쓰려면 각각 `config/*_config.json`에 본인 토큰 발급
+
+**주의**: 토큰 파일(`config/teams_graph_token.json`, `config/*_config.json`)은 개인 인증정보이므로 공유/커밋 금지 — `.gitignore`로 이미 제외되어 있음. 토큰은 Azure 앱 등록 없이 Microsoft Office first-party client의 위임 권한으로 발급되며, 각자 본인 데이터만 조회 가능
+
 ## ⚠️ 주의사항
 
 - 데이터베이스 파일은 자동으로 감시 제외됩니다
