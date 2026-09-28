@@ -245,6 +245,51 @@
 - delegated permission이라 본인 채팅만 조회 가능 (주간보고 용도로 적절)
 - 토큰 파일은 access+refresh token을 포함하므로 `.gitignore` 필수 처리
 
+### 28. AI 임베딩: 사내 LiteLLM 프록시의 `azure/text-embedding-3-large`
+
+**결정**: 활동 의미 분류에 사내 프록시의 임베딩 엔드포인트 사용 (dim 3072)
+
+**이유**:
+- 프록시의 `/v1/models` 조회 결과 임베딩 모델 4종 확인 — 별도 로컬 모델 다운로드 없이 사내 인프라만으로 의미 분석 가능
+- OpenAI 호환 `/v1/embeddings`라 향후 LangChain `OpenAIEmbeddings`로도 재사용 가능
+
+### 29. 활동 클러스터링: 외부 VectorDB 없이 인메모리 코사인 유사도
+
+**결정**: `activity_clusterer.py`에서 그리디 코사인 유사도 클러스터링(임계값 0.62), 영속 벡터 저장소 도입은 보류
+
+**이유**:
+- 주간 활동 수백 건 규모에서는 O(n²) 인메모리 비교로 충분 — FAISS/Qdrant 같은 별도 벡터DB는 오버엔지니어링
+- sm-ops-pub-mcp가 쓰던 Qdrant(localhost:6333)는 별도 서버 기동이 필요해 로컬 단독 실행 구조와 안 맞음
+- 향후 활동 누적·"유사 과거 작업" 검색이 필요해지면 SQLite에 임베딩 테이블 추가 방식으로 확장 예정
+
+### 30. LLM 호출 구조: LangChain LCEL 체인 (요약 표준화)
+
+**결정**: `llm_summarizer.py`를 `ChatPromptTemplate | ChatOpenAI | StrOutputParser` LCEL 체인으로 구현, `PROMPT_TEMPLATES`에 소스별 프롬프트 분리
+
+**이유**:
+- 프록시가 OpenAI 호환이라 `ChatOpenAI(base_url=프록시)`만으로 연결됨
+- 소스별(파일/메일/Teams/주제명) 프롬프트를 템플릿으로 분리 → 코드 수정 없이 프롬프트·모델 교체 가능
+- 체인의 `with_retry`로 일시 오류 자동 재시도, 실패 시 기존 폴백(None) 유지
+- LangChain은 선택 의존성 — 미설치 환경에선 None 반환으로 조용히 폴백
+
+### 31. 보고서 생성: LangGraph 파이프라인 (순차 경로 폴백 유지)
+
+**결정**: `report_pipeline.py`의 StateGraph(`collect→filter→analyze→aggregate→output`)로 보고서 생성. `generate_and_save_weekly_report`는 그래프 경로 우선, 실패 시 기존 순차 경로로 폴백
+
+**이유**:
+- `collect_weekly_data`의 내부를 `fetch_week_activities`/`analyze_week_activities`/`compose_weekly_data` 단계 함수로 분해해 그래프 노드와 순차 경로가 같은 로직을 공유 — 중복 구현 없음
+- 조건 엣지로 "활동 0건이면 LLM 분석 건너뛰기"를 그래프 구조로 표현 — try/except 산재 대신 명시적 분기
+- 향후 새 분석 단계(RAG 의미 질의 등) 추가 시 노드 하나만 붙이면 됨
+
+### 32. macOS 이식: win32 가드 + Outlook Graph 폴백
+
+**결정**: Windows 전용 코드를 가드 처리하고, macOS에서는 `teams_collector`의 디바이스 토큰을 재사용해 Graph로 메일을 수집
+
+**이유**:
+- `win32gui`/`win32process`(GUI 프로세스 감지)와 `win32com`(Outlook COM)이 유일한 Windows 전용 의존성 — try/except 가드로 다른 OS에서도 import 통과
+- macOS에서 Outlook 대체가 필요했는데, Teams 인증 토큰으로 `/me/mailFolders/{Inbox,SentItems}`가 이미 동작 — 새 인증 경로를 만들 필요가 없어 이중 구현 부담이 사라짐
+- `pywin32`를 `sys_platform == 'win32'` 조건부로 설치해 macOS pip 설치 오류 방지
+
 ## ❌ 폐기된 결정
 
 ### 1. 보고서 포맷: PDF/HTML 포함
