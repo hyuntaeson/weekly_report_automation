@@ -691,7 +691,7 @@ class WeeklyPulseApp:
                 ],
                 spacing=0,
             ),
-            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=8),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
             border=ft.BorderSide(1, ft.Colors.GREY_200),
