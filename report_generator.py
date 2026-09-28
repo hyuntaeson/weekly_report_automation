@@ -96,6 +96,7 @@ class ReportGenerator:
             1 for activity in activities if activity.get("source") == "claude_code"
         )
         teams_my = self._summarize_my_teams_messages(activities)
+        topics = self._cluster_topics(activities)
         recent_activities = activities[-20:]
         activities_by_action = self._group_activities_by_action(activities)
 
@@ -113,6 +114,7 @@ class ReportGenerator:
             "ai_tool_sessions": ai_tool_sessions,
             "teams_my_message_count": teams_my["count"],
             "teams_my_summary": teams_my["summary"],
+            "topics": topics,
             "raw_activities": recent_activities,
             "raw_activity_total": len(activities),
             "highlights": self._build_highlights(
@@ -164,6 +166,18 @@ class ReportGenerator:
                 document.add_paragraph(
                     f"AI 코딩 관련 활동은 {weekly_data['ai_tool_sessions']}건입니다."
                 )
+
+            if weekly_data.get("topics"):
+                self._add_section_title(document, "주제별 작업 (AI 분석)")
+                document.add_paragraph(
+                    "임베딩 기반 의미 클러스터링으로 이번 주 활동을 "
+                    "주제 단위로 묶었습니다."
+                )
+                for topic in weekly_data["topics"]:
+                    line = f"• {topic['name']} ({topic['count']}건)"
+                    if topic.get("examples"):
+                        line += ": " + ", ".join(topic["examples"])
+                    document.add_paragraph(line)
 
             if weekly_data.get("teams_my_message_count"):
                 self._add_section_title(document, "Teams 내 메시지 요약")
@@ -415,6 +429,21 @@ class ReportGenerator:
             print(f"Warning: Teams message summarization failed: {e}")
             summary = None
         return {"count": len(texts), "summary": summary or ""}
+
+    def _cluster_topics(self, activities):
+        """임베딩 클러스터링으로 주간 활동을 주제 단위로 묶는다.
+        LiteLLM 설정이 없거나 실패하면 빈 리스트 (보고서 섹션 생략)."""
+        try:
+            from activity_clusterer import ActivityClusterer
+            clusterer = ActivityClusterer(
+                str(self.base_dir / "config" / "litellm_config.json")
+            )
+            if not clusterer.enabled:
+                return []
+            return clusterer.build_topics(activities)
+        except Exception as e:
+            print(f"Warning: topic clustering failed: {e}")
+            return []
 
     def _dedupe_meetings(self, activities):
         """같은 회의가 Outlook(COM)과 Teams(Graph) 양쪽으로 수집된 경우

@@ -64,6 +64,13 @@
 - **다음 단계(사용자 승인)**: ① 임베딩+VectorDB 의미 클러스터링 → "주제별 작업" 보고서 섹션 ② LCEL 요약 체인 표준화 ③ LangGraph 보고서 생성 파이프라인 노드화
 - DRM 폴백 버그는 의도적 보류 — 암호화 문서 처리의 더 나은 방법을 검토 중
 
+### 9. AI 적용 1단계: 임베딩 클러스터링 → "주제별 작업" 섹션 (완료)
+- `activity_clusterer.py` 신규: 사내 LiteLLM 임베딩(`azure/text-embedding-3-large`, dim 3072) + 코사인 유사도 그리디 클러스터링(임계값 0.62, 외부 VectorDB 없이 인메모리)
+- 클러스터명은 LLM이 대표 활동들을 보고 20자 주제명으로 생성 — 실측 결과 "신세계 개발 플랫폼 접근", "이마트24 POS 시스템 정기 점검", "POS서버 DB 접근 문제 해결" 등 정확한 주제 분류 확인
+- `llm_summarizer.py`: 요약 전용 외에 범용 `complete(system_prompt, text)` 메서드 추가
+- 보고서 Markdown/Word 양쪽에 "주제별 작업 (AI 분석)" 섹션 추가. LLM/임베딩 실패 시 섹션 생략 (폴백)
+- 다음 단계 잔여: ② LCEL 요약 체인 표준화 ③ LangGraph 파이프라인
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)

@@ -13,6 +13,13 @@
 - {{ highlight }}
 {% endfor %}
 
+{% if topics %}
+## 주제별 작업 (AI 분석)
+임베딩 기반 의미 클러스터링으로 이번 주 활동을 주제 단위로 묶었습니다.
+{% for t in topics %}
+- **{{ t.name }}** ({{ t.count }}건){% if t.examples %}: {{ t.examples|join(", ") }}{% endif %}
+{% endfor %}
+{% endif %}
 {% if teams_my_message_count > 0 %}
 ## Teams 내 메시지 요약
 이번 주 Teams에서 내가 보낸 메시지 {{ teams_my_message_count }}건을 요약했습니다.
