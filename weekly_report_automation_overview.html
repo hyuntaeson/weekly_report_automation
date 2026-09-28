@@ -123,6 +123,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <li>수집 데이터의 <b>정규화·저장</b> — SQLite에 소스/액션/시각 단위로 통합</li>
   <li><b>AI 요약이 포함된 보고서</b> — Markdown·Word 2종 산출</li>
   <li><b>다른 사용자도 사용 가능</b> — 개인 자격증명만 교체하면 되는 배포 구조</li>
+  <li><b>OS 제한 없이 제공</b> — Windows·macOS 어디서든 동작, 플랫폼별 기능 차이는 자동 폴백으로 흡수</li>
 </ul>
 <h2 class="sph-section-title">왜 웹이 아닌 로컬 프로그램인가</h2>
 <p style="margin-bottom:var(--sp-3);">수집 대상이 전부 <b>내 PC 안에 있기 때문</b>에, 로컬에서 실행되는 프로그램 형태가 필수입니다.</p>
@@ -253,12 +254,14 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <div class="sph-card"><div class="label">보고서 작성</div><div class="value">~90<span class="unit">% 절감</span></div><div class="delta">수작업 취합·서식 작업 제거, 검토만 수행</div></div>
   <div class="sph-card"><div class="label">인증 부담</div><div class="value">1<span class="unit">회</span></div><div class="delta">디바이스 로그인 후 토큰 자동 갱신</div></div>
   <div class="sph-card is-accent"><div class="label">확장성</div><div class="value">무제한</div><div class="delta">수집기 하나만 추가하면 새 소스 연동</div></div>
+  <div class="sph-card"><div class="label">지원 OS</div><div class="value">Win·macOS</div><div class="delta">Windows 전용 기능도 Graph 폴백으로 맥에서 동작</div></div>
 </div>
 <h2 class="sph-section-title">정성적 효과</h2>
 <ul class="sph-list">
   <li><b>누락 제로</b> — 기억이 아닌 기록 기반으로 주간 활동을 완전 추적</li>
   <li><b>지식 자산화</b> — LLM이 요약한 활동이 주간 단위 DB로 축적, 회고·실적 정리에 재활용</li>
   <li><b>팀 확산 가능</b> — 각자 본인 계정 로그인 1회로 동일 기능 사용, 결과물은 개인별 독립</li>
+  <li><b>OS 제한 없는 제공</b> — Windows는 물론 macOS에서도 동일하게 동작. Windows 전용 기능(Outlook COM 등)은 Microsoft Graph로 자동 전환되고, 플랫폼별 감시 경로·프로세스 감지도 각각 지원 — 팀 내 어떤 PC 환경에서도 설치만으로 사용 가능</li>
   <li><b>사내 AI 활용 사례</b> — MCP·LLM 프록시·OAuth의 실무 결합 레퍼런스로 기능</li>
 </ul>
 
