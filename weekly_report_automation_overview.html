@@ -199,19 +199,6 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <h1 class="sph-title">시스템 구조</h1>
   <p class="sph-subtitle">수집 → 저장 → 생성의 4계층 파이프라인</p>
   
-<h2 class="sph-section-title">계층 구성</h2>
-<table class="sph-table">
-  <thead><tr><th>계층</th><th>역할</th><th>구성 요소</th></tr></thead>
-  <tbody>
-    <tr><td><b>수집</b></td><td>활동 이벤트 캡처</td><td>파일시스템 감시 · 브라우저 방문 기록 · IDE 활동 · Outlook 메일/캘린더 · Teams 채팅/일정 · Slack·Confluence 활동</td></tr>
-    <tr><td><b>통합</b></td><td>주기적 수집 오케스트레이션</td><td>소스별 주기로 백그라운드 자동 수집, 사용자가 수동으로 즉시 수집할 수도 있음</td></tr>
-    <tr><td><b>정제</b></td><td>노이즈·민감정보 제거</td><td>임시 파일·중복 이벤트·인증 과정 URL 등 무의미하거나 민감한 데이터를 보고서 전 단계에서 정리</td></tr>
-    <tr><td><b>저장</b></td><td>활동 정규화·영속화</td><td>SQLite에 모든 소스의 활동을 통합 저장 — 중복 방지, 주간 집계, 활동의 의미 벡터까지 함께 축적</td></tr>
-    <tr><td><b>생성</b></td><td>집계·요약·산출</td><td>주간 데이터를 집계·요약해 Markdown과 Word 두 가지 보고서로 출력</td></tr>
-    <tr><td><b>AI 분석</b></td><td>수집 데이터의 의미 분석·그룹화</td><td>임베딩 클러스터링으로 주제별 자동 분류 · 소스별 맞춤 요약 체인 · 주간 활동 요약</td></tr>
-    <tr><td><b>실행</b></td><td>사용자 인터페이스</td><td>데스크톱 GUI — 추적 시작/중지, 수집 실행, 앱별 작업 현황 실시간 표시, 감시 폴더 관리</td></tr>
-  </tbody>
-</table>
 <h2 class="sph-section-title">데이터 흐름</h2>
 <div class="sph-callout">
   활동 발생 → 수집기가 이벤트 정규화 → SQLite 적재(중복 제거) → 주간 보고 시
