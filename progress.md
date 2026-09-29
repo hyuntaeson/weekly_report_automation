@@ -117,6 +117,7 @@
 
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
+- **DRM 내용 추출 (2026-09-29 부분 해소)**: Windows + Office 설치 환경에서는 COM으로 실제 내용 추출 동작 확인 (decisions #37). macOS는 수정 이벤트만 기록 — 고도화 후보로 사내 DevX `DocumentLoader.yaml` 워크플로우(파일 업로드 → content 반환 API가 있다면) 검증 여지 남김
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)
 
 ## 🎯 다음 할 일

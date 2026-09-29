@@ -145,6 +145,18 @@ class FileActivityHandler(FileSystemEventHandler):
         summary = self.summarizer.summarize(added, template="file") or added[:300]
         return {'content_added': added[:2000], 'summary': summary}
 
+    _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+    def _is_ole2(self, file_path):
+        """파일이 OLE2 컨테이너(사내 DRM 재암호화)로 저장됐는지 확인.
+        python-docx/pptx는 OLE2에 BadZipFile이 아닌 PackageNotFoundError를
+        던지므로 예외 타입이 아니라 매직바이트로 판별한다."""
+        try:
+            with open(file_path, "rb") as f:
+                return f.read(8) == self._OLE2_MAGIC
+        except OSError:
+            return False
+
     def _drm_blocked_details(self):
         """사내 DRM/문서보안 솔루션이 파일을 OLE2로 재암호화해서 zip으로
         못 여는 경우: 변경이 있었다는 사실만이라도 보고서에 남기기 위한
@@ -267,12 +279,12 @@ class FileActivityHandler(FileSystemEventHandler):
             doc = Document(file_path)
             paragraphs = [p.text.strip() for p in doc.paragraphs
                           if p.text.strip()]
-        except zipfile.BadZipFile:
+        except Exception:
+            if not self._is_ole2(file_path):
+                return None
             paragraphs = self._word_paragraphs_via_com(file_path)
             if paragraphs is None:
                 return self._drm_blocked_details()
-        except Exception:
-            return None
 
         previous = self.last_seen_word.get(file_path, [])
         self.last_seen_word[file_path] = paragraphs
@@ -297,12 +309,12 @@ class FileActivityHandler(FileSystemEventHandler):
                             texts.append(text)
                 if texts:
                     lines.append(f"[슬라이드 {slide_number}] " + " / ".join(texts))
-        except zipfile.BadZipFile:
+        except Exception:
+            if not self._is_ole2(file_path):
+                return None
             lines = self._ppt_lines_via_com(file_path)
             if lines is None:
                 return self._drm_blocked_details()
-        except Exception:
-            return None
 
         previous = self.last_seen_ppt.get(file_path, [])
         self.last_seen_ppt[file_path] = lines
@@ -331,12 +343,12 @@ class FileActivityHandler(FileSystemEventHandler):
                     snapshot[sheet.title] = rows
             finally:
                 workbook.close()
-        except zipfile.BadZipFile:
+        except Exception:
+            if not self._is_ole2(file_path):
+                return None
             snapshot = self._excel_snapshot_via_com(file_path)
             if snapshot is None:
                 return self._drm_blocked_details()
-        except Exception:
-            return None
 
         previous = self.last_seen_excel.get(file_path, {})
         self.last_seen_excel[file_path] = snapshot
