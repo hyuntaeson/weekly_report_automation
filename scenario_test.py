@@ -234,6 +234,19 @@ def t_slack():
     return ok("config 존재")
 
 
+def t_onenote():
+    if not os.path.exists("config/teams_graph_token.json"):
+        return skip("토큰 없음")
+    from onenote_collector import OneNoteCollector
+    col = OneNoteCollector()
+    # 페이지 수준은 권한 부재 — 노트북/섹션 목록 수집 가능 여부 확인
+    try:
+        acts = col.collect_activity(days=400)
+        return ok(f"노트북/섹션 변경 {len(acts)}건 수집 (페이지 단위는 권한 제한)")
+    except Exception as e:
+        return fail(str(e)[:80])
+
+
 def t_file_watcher_watchdirs():
     cfg = "config/watch_config.json"
     if not os.path.exists(cfg):
@@ -458,6 +471,7 @@ TESTS = [
     ("COL-08", "수집", "Confluence 설정 존재", t_confluence),
     ("COL-09", "수집", "Slack 설정 존재", t_slack),
     ("COL-10", "수집", "감시 폴더 설정", t_file_watcher_watchdirs),
+    ("COL-11", "수집", "OneNote 수집(라이브)", t_onenote),
 
     ("PROC-01", "데이터 가공", "회의 중복 제거(teams 우선)", t_meeting_dedupe),
     ("PROC-02", "데이터 가공", "일시 파일(created+deleted) 제거", t_transient_files),

@@ -108,6 +108,13 @@
 - 봇/알림 채팅 처리: `from.application.displayName`도 상대방으로 인식 → "봇 - 아이앤씨 알림" 등으로 표기
 - 결과: 14개 중 12개 실명 해석. 미해결 2개는 사람이 아닌 채팅 — 시스템 메시지 1건뿐이거나 메시지 0건의 빈 채팅이라 해석 불가 ("1:1 - (상대방 정보 없음)" 표기)
 
+### 15. OneNote 연동 — 섹션 수준 (제한적 완료, 2026-09-29)
+- `onenote_collector.py` 신규: Teams Graph 토큰 재사용, 노트북/섹션의 `lastModifiedDateTime` 수집 → `source='onenote'`
+- **권한 제한 확인**: 페이지 제목/본문은 `Notes.Read.All` 필요 → first-party client 사전승인 없음 (`AADSTS65002`). 디바이스 로그인으로 동적 동의 시도했으나 차단됨
+- 데스크톱 OneNote 미설치 → COM 경로도 불가
+- `.one` 파일 자체는 기존 파일 감시에서 이미 수정 이벤트로 잡힘 (Documents 감시 경로에 포함)
+- IntegratedCollector에 30분 주기 수집 스레드 추가, GUI 소스 매핑(onenote→OneNote), scenario_test COL-11 추가
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **LiteLLM 프록시 타임아웃**: 15초 read timeout 발생 (일시적 네트워크 이슈일 수 있음, fallback은 정상 동작)

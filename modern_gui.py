@@ -198,6 +198,7 @@ class WeeklyPulseApp:
             "vscode": "VS Code",
             "orca": "Orca",
             "filesystem": "Files",
+            "onenote": "OneNote",
         }
         self.total_hours = f"{hours} hrs"
         self.active_tools = sum(

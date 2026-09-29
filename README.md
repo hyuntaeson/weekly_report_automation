@@ -16,6 +16,7 @@
 - Confluence (페이지 생성/수정)
 - 브라우저 (Chrome 방문 기록)
 - Teams (회의 + 채팅 메시지)
+- OneNote (노트북·섹션 수정 이력 — Graph 권한 제한으로 페이지 본문은 불가)
 
 ## ✅ 완료 기준
 
@@ -72,6 +73,7 @@
 | Confluence | ✅ 완료 | REST API (PAT Bearer) + AI 요약 |
 | 브라우저 | ✅ 완료 (Chrome only) | MV3 확장 + 로컬 HTTP 서버 |
 | Teams | ✅ 완료 | 채팅+일정=Graph 위임권한(디바이스 로그인), 1:1 대화 상대방 실명 해석 |
+| OneNote | ✅ 완료 (제한적) | Graph 위임권한 — 노트북/섹션 수정 시각 수집. 페이지 제목·본문은 `Notes.Read.All` 미승인으로 불가 |
 
 ### 테스트 결과
 
@@ -91,6 +93,7 @@ weekly_report_automation/
 ├── ai_tool_collector.py          # AI 툴(Claude Code) 활동 수집
 ├── confluence_collector.py       # Confluence 페이지 활동 수집 (AI 요약 포함)
 ├── teams_collector.py            # Teams 활동 수집 (Graph API, config 없으면 스텁)
+├── onenote_collector.py          # OneNote 활동 수집 (Graph API — 섹션 수준)
 ├── llm_summarizer.py             # 사내 LiteLLM Proxy 기반 텍스트 요약기 (LCEL 체인)
 ├── activity_clusterer.py         # 임베딩 의미 클러스터링 → 보고서 "주제별 작업"
 ├── report_pipeline.py            # 보고서 생성 LangGraph 파이프라인

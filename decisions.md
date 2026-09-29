@@ -316,6 +316,16 @@
 - 채팅 목록 순회 시 멤버/메시지 호출이 연속돼 429가 실제로 관측됨 — 무재시도면 해당 채팅 수집이 빠짐
 - 429만 재시도하고 다른 에러는 즉시 raise — 무한 재시도로 인한 지연 방지
 
+### 36. OneNote 수집: Graph 섹션 수준 (페이지 내용은 권한 제한으로 불가)
+
+**결정**: `onenote_collector.py`가 Teams 디바이스 토큰을 재사용해 `/me/onenote/notebooks?$expand=sections`로 노트북·섹션의 `lastModifiedDateTime`을 수집. 페이지 제목·본문은 수집하지 않는다.
+
+**이유**:
+- `/me/onenote/pages` 등 페이지 경로는 `Notes.Read.All` scope를 요구하는데, Microsoft Office first-party client에 사전 승인이 없어 동적 동의 시 `AADSTS65002`로 차단됨 (2026-09-29 직접 확인)
+- 데스크톱 OneNote 미설치 환경이라 `OneNote.Application` COM도 불가
+- `.one` 파일은 이미 파일 감시가 수정 이벤트를 잡고 있음 — 이 수집기는 "어느 노트북/섹션을 만졌는지" 맥락만 제공
+- 사용자가 OneNote 페이지 본문까지 원하면 조직 차원에서 `Notes.Read.All` 승인이 필요하거나 데스크톱 OneNote+COM 경로를 써야 함
+
 ## ❌ 폐기된 결정
 
 ### 1. 보고서 포맷: PDF/HTML 포함

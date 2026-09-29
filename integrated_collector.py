@@ -14,6 +14,7 @@ from outlook_collector import OutlookCollector, OutlookLogCollector
 from ai_tool_collector import AIToolCollector
 from confluence_collector import ConfluenceCollector
 from teams_collector import TeamsCollector
+from onenote_collector import OneNoteCollector
 from database import ActivityDatabase
 from browser_activity_server import BrowserActivityServer
 
@@ -36,6 +37,7 @@ class IntegratedCollector:
         self.ai_tool_collector = AIToolCollector(db_path)
         self.confluence_collector = ConfluenceCollector(db_path)
         self.teams_collector = TeamsCollector(db_path)
+        self.onenote_collector = OneNoteCollector(db_path)
 
         # Browser activity server (optional)
         self.browser_server = None
@@ -47,6 +49,7 @@ class IntegratedCollector:
         self.ai_tool_collection_interval = 300  # 5 minutes
         self.confluence_collection_interval = 1800  # 30 minutes
         self.teams_collection_interval = 1800  # 30 minutes
+        self.onenote_collection_interval = 1800  # 30 minutes
 
         # Control flags
         self.is_running = False
@@ -94,6 +97,13 @@ class IntegratedCollector:
         )
         teams_thread.start()
         self.collection_threads.append(teams_thread)
+
+        # Start OneNote collector thread (Teams 토큰 재사용, 토큰 없으면 스텁)
+        onenote_thread = threading.Thread(
+            target=self.onenote_collection_loop, daemon=True
+        )
+        onenote_thread.start()
+        self.collection_threads.append(onenote_thread)
 
         # Start browser activity server if enabled
         if self.enable_browser_server:
@@ -251,6 +261,25 @@ class IntegratedCollector:
 
             # Wait for next collection
             time.sleep(self.teams_collection_interval)
+
+    def onenote_collection_loop(self):
+        """Continuous OneNote activity collection loop"""
+        while self.is_running:
+            try:
+                onenote_activities = (
+                    self.onenote_collector.collect_activity(days=1)
+                )
+                if onenote_activities:
+                    count = self.onenote_collector.save_to_database(
+                        onenote_activities
+                    )
+                    print(f"Saved {count} OneNote activities to database")
+
+            except Exception as e:
+                print(f"Error in OneNote collection: {e}")
+
+            # Wait for next collection
+            time.sleep(self.onenote_collection_interval)
 
     def stop(self):
         """Stop all collectors"""
