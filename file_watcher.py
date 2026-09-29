@@ -156,12 +156,108 @@ class FileActivityHandler(FileSystemEventHandler):
             'summary': '(내용 변경 감지됨 - 사내 보안 정책으로 암호화되어 상세 내용 확인 불가)',
         }
 
+    # --- Windows Office COM 폴백 (DRM/OLE2 파일 읽기) ---
+
+    def _open_office_com(self, prog):
+        """Windows Office COM 앱 인스턴스 반환. 비Windows/미설치 시 None."""
+        if sys.platform != "win32":
+            return None
+        try:
+            import win32com.client
+            app = win32com.client.Dispatch(f"{prog}.Application")
+            for attr, val in (("Visible", False), ("DisplayAlerts", False)):
+                try:
+                    setattr(app, attr, val)
+                except Exception:
+                    pass
+            return app
+        except Exception:
+            return None
+
+    def _excel_snapshot_via_com(self, file_path):
+        """OLE2로 재암호화된 xlsx를 Excel COM으로 열어 openpyxl과 동일한
+        스냅샷 dict 반환. Excel이 자체 권한으로 복호화하므로 라벨 해제
+        없이 내용이 읽힘. 실패 시 None."""
+        app = self._open_office_com("Excel")
+        if app is None:
+            return None
+        try:
+            wb = app.Workbooks.Open(file_path, ReadOnly=True)
+            snapshot = {}
+            for ws in wb.Worksheets:
+                rows = []
+                for row in ws.UsedRange.Rows:
+                    vals = tuple(c.Value for c in row.Cells)
+                    if any(v is not None and str(v).strip() for v in vals):
+                        rows.append(vals)
+                snapshot[ws.Name] = rows
+            wb.Close(False)
+            return snapshot
+        except Exception:
+            return None
+        finally:
+            try:
+                app.Quit()
+            except Exception:
+                pass
+
+    def _word_paragraphs_via_com(self, file_path):
+        """OLE2 docx를 Word COM으로 열어 문단 텍스트 리스트 반환."""
+        app = self._open_office_com("Word")
+        if app is None:
+            return None
+        try:
+            doc = app.Documents.Open(file_path, ReadOnly=True)
+            paras = [p.Range.Text.strip() for p in doc.Paragraphs
+                     if p.Range.Text.strip()]
+            doc.Close(False)
+            return paras
+        except Exception:
+            return None
+        finally:
+            try:
+                app.Quit()
+            except Exception:
+                pass
+
+    def _ppt_lines_via_com(self, file_path):
+        """OLE2 pptx를 PowerPoint COM으로 열어 슬라이드 텍스트 리스트 반환."""
+        app = self._open_office_com("PowerPoint")
+        if app is None:
+            return None
+        try:
+            pres = app.Presentations.Open(file_path, ReadOnly=True,
+                                          WithWindow=False)
+            lines = []
+            for slide_number, slide in enumerate(pres.Slides, start=1):
+                texts = []
+                for shape in slide.Shapes:
+                    try:
+                        if shape.HasTextFrame and shape.TextFrame.HasText:
+                            text = shape.TextFrame.TextRange.Text.strip()
+                            if text:
+                                texts.append(text)
+                    except Exception:
+                        continue
+                if texts:
+                    lines.append(f"[슬라이드 {slide_number}] " + " / ".join(texts))
+            pres.Close()
+            return lines
+        except Exception:
+            return None
+        finally:
+            try:
+                app.Quit()
+            except Exception:
+                pass
+
     def _capture_word_content(self, file_path):
         """Word(.docx) 파일에서 새로 추가/변경된 문단을 캡처.
 
         사내 DRM/문서보안 솔루션이 저장 직후 .docx를 OLE2 컨테이너로
         재암호화하는 경우가 있어(이 프로젝트에서 이미 확인된 이슈),
-        읽기 실패 시 조용히 None을 반환한다(정상 상황임).
+        파서 실패 시 Windows에서는 Word COM으로 한 번 더 읽고,
+        그것도 실패하면 "보안 문서" 폴백 details를 반환한다.
         """
         try:
             from docx import Document
@@ -169,12 +265,15 @@ class FileActivityHandler(FileSystemEventHandler):
             return None
         try:
             doc = Document(file_path)
+            paragraphs = [p.text.strip() for p in doc.paragraphs
+                          if p.text.strip()]
         except zipfile.BadZipFile:
-            return self._drm_blocked_details()
+            paragraphs = self._word_paragraphs_via_com(file_path)
+            if paragraphs is None:
+                return self._drm_blocked_details()
         except Exception:
             return None
 
-        paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
         previous = self.last_seen_word.get(file_path, [])
         self.last_seen_word[file_path] = paragraphs
 
@@ -188,21 +287,22 @@ class FileActivityHandler(FileSystemEventHandler):
             return None
         try:
             presentation = Presentation(file_path)
+            lines = []
+            for slide_number, slide in enumerate(presentation.slides, start=1):
+                texts = []
+                for shape in slide.shapes:
+                    if getattr(shape, "has_text_frame", False):
+                        text = shape.text_frame.text.strip()
+                        if text:
+                            texts.append(text)
+                if texts:
+                    lines.append(f"[슬라이드 {slide_number}] " + " / ".join(texts))
         except zipfile.BadZipFile:
-            return self._drm_blocked_details()
+            lines = self._ppt_lines_via_com(file_path)
+            if lines is None:
+                return self._drm_blocked_details()
         except Exception:
             return None
-
-        lines = []
-        for slide_number, slide in enumerate(presentation.slides, start=1):
-            texts = []
-            for shape in slide.shapes:
-                if getattr(shape, "has_text_frame", False):
-                    text = shape.text_frame.text.strip()
-                    if text:
-                        texts.append(text)
-            if texts:
-                lines.append(f"[슬라이드 {slide_number}] " + " / ".join(texts))
 
         previous = self.last_seen_ppt.get(file_path, [])
         self.last_seen_ppt[file_path] = lines
@@ -217,24 +317,26 @@ class FileActivityHandler(FileSystemEventHandler):
         except ImportError:
             return None
 
+        snapshot = None
         try:
             workbook = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+            max_rows, max_cols = 500, 50
+            snapshot = {}
+            try:
+                for sheet in workbook.worksheets:
+                    rows = []
+                    for row in sheet.iter_rows(max_row=max_rows, max_col=max_cols, values_only=True):
+                        if any(cell is not None and str(cell).strip() for cell in row):
+                            rows.append(tuple(row))
+                    snapshot[sheet.title] = rows
+            finally:
+                workbook.close()
         except zipfile.BadZipFile:
-            return self._drm_blocked_details()
+            snapshot = self._excel_snapshot_via_com(file_path)
+            if snapshot is None:
+                return self._drm_blocked_details()
         except Exception:
             return None
-
-        max_rows, max_cols = 500, 50
-        snapshot = {}
-        try:
-            for sheet in workbook.worksheets:
-                rows = []
-                for row in sheet.iter_rows(max_row=max_rows, max_col=max_cols, values_only=True):
-                    if any(cell is not None and str(cell).strip() for cell in row):
-                        rows.append(tuple(row))
-                snapshot[sheet.title] = rows
-        finally:
-            workbook.close()
 
         previous = self.last_seen_excel.get(file_path, {})
         self.last_seen_excel[file_path] = snapshot

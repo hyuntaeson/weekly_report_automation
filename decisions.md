@@ -326,6 +326,16 @@
 - `.one` 파일은 이미 파일 감시가 수정 이벤트를 잡고 있음 — 이 수집기는 "어느 노트북/섹션을 만졌는지" 맥락만 제공
 - 사용자가 OneNote 페이지 본문까지 원하면 조직 차원에서 `Notes.Read.All` 승인이 필요하거나 데스크톱 OneNote+COM 경로를 써야 함
 
+### 37. DRM 문서 내용 추출: Office COM 직접 읽기 폴백 (Windows)
+
+**결정**: 파서가 `BadZipFile`(OLE2 재암호화)로 실패한 Office 문서는 Windows에서 Excel/Word/PowerPoint COM으로 열어 내용을 읽는다 (`_excel_snapshot_via_com` 등). COM도 실패하면 기존 "보안 문서" 폴백 메시지 유지.
+
+**이유**:
+- 원래 검토한 "Purview 라벨 해제 후 재로드" 방식은 라벨 변경이 감사 로그에 남고 추가 권한·GUID 확보가 필요했음
+- 반면 Office COM은 `Workbooks.Open(ReadOnly)`만으로 자체 권한 복호화 → **원본 파일 무수정, 라벨 변경 없이** 내용 추출 (2026-09-29 실제 DRM 발주서 xlsx로 검증)
+- Windows+Office 설치 환경 한정 — macOS/Office 미설치 환경에서는 기존 폴백(수정 이벤트만 기록) 유지
+- 발견한 DRM 파일들은 Purview 라벨이 아닌 별도 문서보안 솔루션으로 보임 (`SensitivityLabel.GetLabel()` 빈 값)
+
 ## ❌ 폐기된 결정
 
 ### 1. 보고서 포맷: PDF/HTML 포함
