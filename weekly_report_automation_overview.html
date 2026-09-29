@@ -163,7 +163,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <div class="arch-arrow">▼</div>
   <div class="arch-layer">
     <div class="arch-label">수집</div>
-    <div class="arch-body"><span class="arch-chip">파일시스템</span><span class="arch-chip">브라우저</span><span class="arch-chip">IDE</span><span class="arch-chip">Outlook</span><span class="arch-chip">Teams</span><span class="arch-chip">Slack</span><span class="arch-chip">Confluence</span><span class="arch-chip">AI 툴</span><span class="arch-note">소스별 수집기가 주기적으로 백그라운드 실행</span></div>
+    <div class="arch-body"><span class="arch-chip">파일시스템</span><span class="arch-chip">브라우저</span><span class="arch-chip">IDE</span><span class="arch-chip">Outlook</span><span class="arch-chip">Teams</span><span class="arch-chip">OneNote</span><span class="arch-chip">Slack</span><span class="arch-chip">Confluence</span><span class="arch-chip">AI 툴</span><span class="arch-note">소스별 수집기가 주기적으로 백그라운드 실행</span></div>
   </div>
   <div class="arch-arrow">▼</div>
   <div class="arch-layer">
@@ -227,6 +227,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
     <tr><td>IDE</td><td>VS Code/Orca/Claude Code 로그·storage 파싱</td><td>OS별 표준 경로 자동 탐색, AI 코딩 활동 별도 집계</td></tr>
     <tr><td>Outlook</td><td>Outlook COM(pywin32)으로 메일·캘린더 수집, 미실행 시 Graph 자동 폴백</td><td>Teams 회의 링크·참석자 감지</td></tr>
     <tr><td>Teams</td><td>Microsoft Graph(디바이스 코드 위임권한) — 채팅·일정·참석자·1:1 대화 상대방 해석</td><td>토큰 로컬 저장·자동 갱신</td></tr>
+    <tr><td>OneNote</td><td>Microsoft Graph — 노트북/섹션 단위 수정 이력 수집(같은 토큰 재사용)</td><td>페이지 본문은 권한 승인 필요 — 파일 감시가 .one 수정 이벤트도 병행 커버</td></tr>
     <tr><td>Slack/Confluence</td><td>각 사 REST API + 토큰</td><td>토큰 파일 분리 관리, Confluence 페이지 본문 요약 수집</td></tr>
     <tr><td><b>AI 분석</b></td><td>사내 LiteLLM 프록시 — 채팅 요약(haiku-4-5) + 임베딩(text-embedding-3-large) → 의미 클러스터링</td><td>벡터는 SQLite에 영속 저장해 재사용</td></tr>
     <tr><td><b>보고서 생성</b></td><td>LangGraph 파이프라인 → Jinja2(Markdown) + minimal docx 빌더(Word)</td><td>활동 없는 주간은 AI 분석 자동 스킵</td></tr>
@@ -288,7 +289,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <p class="sph-subtitle">자동화가 만들어내는 변화</p>
   
 <div class="sph-cards">
-  <div class="sph-card"><div class="label">수집 소스</div><div class="value">8<span class="unit">+</span></div><div class="delta">파일·브라우저·IDE·Outlook·Teams·Slack·Confluence·AI툴</div></div>
+  <div class="sph-card"><div class="label">수집 소스</div><div class="value">9<span class="unit">+</span></div><div class="delta">파일·브라우저·IDE·Outlook·Teams·OneNote·Slack·Confluence·AI툴</div></div>
   <div class="sph-card"><div class="label">보고서 작성</div><div class="value">~90<span class="unit">% 절감</span></div><div class="delta">수작업 취합·서식 작업 제거, 검토만 수행</div></div>
   <div class="sph-card"><div class="label">인증 부담</div><div class="value">1<span class="unit">회</span></div><div class="delta">디바이스 로그인 후 토큰 자동 갱신</div></div>
   <div class="sph-card is-accent"><div class="label">확장성</div><div class="value">무제한</div><div class="delta">수집기 하나만 추가하면 새 소스 연동</div></div>
