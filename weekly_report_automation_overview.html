@@ -79,6 +79,20 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
 .sph-divider .d-number{font-size:var(--fs-display);font-weight:700;margin-top:var(--sp-2);}
 .sph-divider .d-number::after{content:"";display:block;width:56px;height:5px;background:var(--sph-yellow);margin-top:var(--sp-4);border-radius:2px;}
 
+/* 아키텍처 구성도 (외부 라이브러리 없는 CSS 다이어그램) */
+.arch{display:flex;flex-direction:column;}
+.arch-layer{display:flex;align-items:stretch;gap:var(--sp-4);}
+.arch-label{width:110px;flex-shrink:0;background:var(--sph-navy);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);padding:var(--sp-3);font-size:var(--fs-caption);}
+.arch-label.accent{background:var(--sph-yellow);color:var(--sph-ink);}
+.arch-body{flex:1;border:1px solid var(--sph-gray-300);border-radius:var(--radius);padding:var(--sp-3) var(--sp-4);display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center;background:#fff;min-height:46px;}
+.arch-chip{background:var(--sph-gray-100);border:1px solid var(--sph-gray-300);border-radius:999px;padding:3px 12px;font-size:var(--fs-caption);font-weight:600;white-space:nowrap;}
+.arch-chip.navy{background:var(--sph-navy);color:#fff;border-color:var(--sph-navy);}
+.arch-chip.yellow{background:var(--sph-yellow);color:var(--sph-ink);border-color:var(--sph-yellow);}
+.arch-arrow{width:110px;text-align:center;color:var(--sph-gray-500);font-size:16px;line-height:1;padding:1px 0;}
+.arch-node{background:var(--sph-white);border:1px solid var(--sph-navy);color:var(--sph-navy);border-radius:var(--radius);padding:3px 10px;font-size:var(--fs-caption);font-weight:700;white-space:nowrap;}
+.arch-to{color:var(--sph-gray-500);font-weight:700;}
+.arch-note{font-size:var(--fs-caption);color:var(--sph-gray-500);flex-basis:100%;}
+
 @media print{body{background:#fff;} .sph-page{box-shadow:none;border-radius:0;margin:0;page-break-after:always;}}
 </style>
 </head>
@@ -103,7 +117,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   </div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Overview</span><div class="sph-nav"><span class="is-active">목적</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Overview</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
   <h1 class="sph-title">프로젝트 목적</h1>
   <p class="sph-subtitle">왜 이 프로그램을 만들었는가</p>
   
@@ -134,10 +148,54 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <li><b>사내 보안 정책</b> — 업무 파일 경로·메일·채팅 기록이 회사 밖 서버로 나가지 않아 데이터 유출 우려 없음</li>
 </ul>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>2 / 6</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>2 / 7</span></div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Architecture</span><div class="sph-nav"><span class="is-active">목적</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Diagram</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
+  <h1 class="sph-title">시스템 구성도</h1>
+  <p class="sph-subtitle">수집부터 보고서 산출까지의 전체 흐름</p>
+
+<div class="arch">
+  <div class="arch-layer">
+    <div class="arch-label accent">사용자</div>
+    <div class="arch-body"><span class="arch-chip navy">데스크톱 GUI</span><span class="arch-chip">추적 시작/중지</span><span class="arch-chip">즉시 수집</span><span class="arch-chip">보고서 생성 버튼</span><span class="arch-chip">작업 현황 모니터</span></div>
+  </div>
+  <div class="arch-arrow">▼</div>
+  <div class="arch-layer">
+    <div class="arch-label">수집</div>
+    <div class="arch-body"><span class="arch-chip">파일시스템</span><span class="arch-chip">브라우저</span><span class="arch-chip">IDE</span><span class="arch-chip">Outlook</span><span class="arch-chip">Teams</span><span class="arch-chip">Slack</span><span class="arch-chip">Confluence</span><span class="arch-chip">AI 툴</span><span class="arch-note">소스별 수집기가 주기적으로 백그라운드 실행</span></div>
+  </div>
+  <div class="arch-arrow">▼</div>
+  <div class="arch-layer">
+    <div class="arch-label">정제</div>
+    <div class="arch-body"><span class="arch-chip">노이즈 필터</span><span class="arch-chip">민감 URL 제거</span><span class="arch-chip">중복 제거</span><span class="arch-chip">경로 정규화</span><span class="arch-note">무의미·민감 데이터를 저장·집계 전에 걸러냄</span></div>
+  </div>
+  <div class="arch-arrow">▼</div>
+  <div class="arch-layer">
+    <div class="arch-label">저장</div>
+    <div class="arch-body"><span class="arch-chip navy">SQLite DB</span><span class="arch-chip">activities</span><span class="arch-chip">weekly_summaries</span><span class="arch-chip">activity_embeddings</span><span class="arch-note">모든 소스의 활동 + 의미 벡터가 한 곳에 축적</span></div>
+  </div>
+  <div class="arch-arrow">▼</div>
+  <div class="arch-layer">
+    <div class="arch-label accent">AI 분석</div>
+    <div class="arch-body"><span class="arch-chip">의미 클러스터링</span><span class="arch-chip">주제명 자동 생성</span><span class="arch-chip">소스별 요약</span><span class="arch-note">사내 LiteLLM 프록시 — 요약 모델 + 임베딩 모델</span></div>
+  </div>
+  <div class="arch-arrow">▼</div>
+  <div class="arch-layer">
+    <div class="arch-label">생성</div>
+    <div class="arch-body"><span class="arch-node">수집</span><span class="arch-to">→</span><span class="arch-node">필터</span><span class="arch-to">→</span><span class="arch-node">분석</span><span class="arch-to">→</span><span class="arch-node">집계</span><span class="arch-to">→</span><span class="arch-node">출력</span><span class="arch-note">LangGraph로 구조화된 보고서 파이프라인</span></div>
+  </div>
+  <div class="arch-arrow">▼</div>
+  <div class="arch-layer">
+    <div class="arch-label accent">산출</div>
+    <div class="arch-body"><span class="arch-chip yellow">Markdown 보고서</span><span class="arch-chip yellow">Word 보고서</span><span class="arch-note">주간회의용 자료</span></div>
+  </div>
+</div>
+
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>3 / 7</span></div>
+</section>
+<section class="sph-page">
+  <div class="sph-header"><span class="sph-kicker">Architecture</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
   <h1 class="sph-title">시스템 구조</h1>
   <p class="sph-subtitle">수집 → 저장 → 생성의 4계층 파이프라인</p>
   
@@ -167,10 +225,10 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <li><b>파이프라인 구조화</b> — 수집→필터→분석→집계→출력을 단계별 그래프로 구성해 조건 분기·폴백·단계별 확장 용이</li>
 </ul>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>3 / 6</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>4 / 7</span></div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Implementation</span><div class="sph-nav"><span class="is-active">목적</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Implementation</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
   <h1 class="sph-title">구현에 필요한 요소</h1>
   <p class="sph-subtitle">각 수집 소스별 접근 방식과 보안 처리</p>
   
@@ -187,10 +245,10 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
     <tr><td><b>보고서 생성</b></td><td>LangGraph 파이프라인 → Jinja2(Markdown) + minimal docx 빌더(Word)</td><td>활동 없는 주간은 AI 분석 자동 스킵</td></tr>
   </tbody>
 </table>
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>4 / 6</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>5 / 7</span></div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">AI Technologies</span><div class="sph-nav"><span class="is-active">목적</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">AI Technologies</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
   <h1 class="sph-title">활용하는 AI 기술</h1>
   <p class="sph-subtitle">사내 인프라와 AI 기술의 결합</p>
   
@@ -235,10 +293,10 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   개인 수준의 AI 활용 파이프라인을 구축하는 것이 이 프로젝트의 핵심 접근법입니다.
 </div>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>5 / 6</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>6 / 7</span></div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Expected Impact</span><div class="sph-nav"><span class="is-active">목적</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Expected Impact</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span></div></div>
   <h1 class="sph-title">기대 효과</h1>
   <p class="sph-subtitle">자동화가 만들어내는 변화</p>
   
@@ -257,7 +315,7 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <li><b>사내 AI 활용 사례</b> — MCP·LLM 프록시·OAuth의 실무 결합 레퍼런스로 기능</li>
 </ul>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>6 / 6</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>7 / 7</span></div>
 </section>
 </body>
 </html>
