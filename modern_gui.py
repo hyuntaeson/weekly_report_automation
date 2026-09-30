@@ -951,9 +951,13 @@ class WeeklyPulseApp:
             excluded_ids = {
                 c.get("id") for c in self.teams_settings.get("excluded_chats", [])
             }
+            # 수집 유형에서 빠진 채팅 유형의 방은 제외 선택지에도 안 띄운다
+            allowed = set(self.teams_settings.get("chat_types", []))
             type_label = {"oneOnOne": "1:1", "group": "그룹", "meeting": "회의"}
             controls = []
             for chat in chats:
+                if chat.get("chat_type") not in allowed:
+                    continue
                 last = (chat.get("last_activity") or "")[:10]
                 label = (
                     f"[{type_label.get(chat['chat_type'], chat['chat_type'])}] "
