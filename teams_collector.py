@@ -99,10 +99,19 @@ def _graph_get_all(
         if limit and len(items) >= limit:
             return items[:limit]
         if url and stop_before and page:
-            oldest = page[-1].get(recency_key) or ""
+            oldest = _dig(page[-1], recency_key) or ""
             if oldest and oldest < stop_before:
                 break
     return items
+
+
+def _dig(item, dotted_key):
+    """'a.b' 형태의 중첩 키를 지원하는 getter (lastMessagePreview.createdDateTime 등)"""
+    for part in dotted_key.split("."):
+        if not isinstance(item, dict):
+            return None
+        item = item.get(part)
+    return item if isinstance(item, str) else None
 
 
 # ---------- 수집/보고 설정 ----------
@@ -393,10 +402,13 @@ class TeamsCollector:
 
         activities = []
         try:
-            # 채팅 목록 자체도 최근 활동순이라 기간 이전 방부터 페이징 중단
+            # 채팅 목록 자체도 최근 활동순 — lastMessagePreview 기준으로
+            # 기간 이전 방부터 페이징 중단 (lastUpdatedDateTime은 메타데이터
+            # 변경 시각이라 메시지 기준과 다름)
             chats = _graph_get_all(
-                access_token, "/me/chats", {"$top": 50},
-                stop_before=since, recency_key="lastUpdatedDateTime",
+                access_token, "/me/chats",
+                {"$top": 50, "$expand": "lastMessagePreview"},
+                stop_before=since, recency_key="lastMessagePreview.createdDateTime",
             )
         except Exception as e:
             print(f"Error listing Teams chats: {e}")
@@ -408,10 +420,10 @@ class TeamsCollector:
             chat_id = chat.get("id")
             if chat_id in excluded_ids:
                 continue
-            # 수집 기간 이전에 마지막 갱신된 채팅방은 메시지 조회 생략 —
+            # 마지막 메시지가 수집 기간 이전인 방은 메시지 조회 생략 —
             # 전체 채팅방(수백 개)을 매번 순회하면 수백 번의 API 호출이 됨
-            last_updated = chat.get("lastUpdatedDateTime") or ""
-            if last_updated and last_updated < since:
+            last_msg = _dig(chat, "lastMessagePreview.createdDateTime") or ""
+            if last_msg and last_msg < since:
                 continue
             try:
                 messages = _graph_get_all(
@@ -451,14 +463,16 @@ class TeamsCollector:
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         me_name = self._me_display_name(access_token)
-        # 채팅 목록은 최근 활동순 — 마지막 항목이 기간 이전이면 다음 페이지 불필요
+        # 마지막 '메시지' 시각 기준으로 기간 필터 — lastUpdatedDateTime은
+        # 멤버/메타데이터 변경에도 갱신돼 오래된 대화가 새 방처럼 보이는 문제가 있음
         chats = _graph_get_all(
-            access_token, "/me/chats", {"$top": 50},
-            stop_before=since, recency_key="lastUpdatedDateTime",
+            access_token, "/me/chats",
+            {"$top": 50, "$expand": "lastMessagePreview"},
+            stop_before=since, recency_key="lastMessagePreview.createdDateTime",
         )
         chats = [
             c for c in chats
-            if not c.get("lastUpdatedDateTime") or c["lastUpdatedDateTime"] >= since
+            if (_dig(c, "lastMessagePreview.createdDateTime") or c.get("lastUpdatedDateTime") or "") >= since
         ]
 
         # 토픽 없는 1:1만 멤버 조회가 필요 — 병렬로 한 번씩만 호출해 빠르게
@@ -493,7 +507,8 @@ class TeamsCollector:
                     "id": chat.get("id"),
                     "title": title,
                     "chat_type": chat.get("chatType"),
-                    "last_activity": chat.get("lastUpdatedDateTime"),
+                    "last_activity": _dig(chat, "lastMessagePreview.createdDateTime")
+                    or chat.get("lastUpdatedDateTime"),
                 }
             )
         return out

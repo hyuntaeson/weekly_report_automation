@@ -954,7 +954,11 @@ class WeeklyPulseApp:
             type_label = {"oneOnOne": "1:1", "group": "그룹", "meeting": "회의"}
             controls = []
             for chat in chats:
-                label = f"[{type_label.get(chat['chat_type'], chat['chat_type'])}] {chat['title']}"
+                last = (chat.get("last_activity") or "")[:10]
+                label = (
+                    f"[{type_label.get(chat['chat_type'], chat['chat_type'])}] "
+                    f"{chat['title']} · {last}"
+                )
                 controls.append(
                     ft.Checkbox(
                         label=label,
