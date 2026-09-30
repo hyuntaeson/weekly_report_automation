@@ -75,6 +75,47 @@ def _graph_get(access_token, path, params=None, max_retries=3):
     raise last_err
 
 
+def _graph_get_all(access_token, path, params=None, limit=0):
+    """@odata.nextLink를 따라가며 전체 수집. limit=0이면 제한 없음."""
+    items = []
+    url = path
+    first = True
+    while url:
+        if first:
+            data = _graph_get(access_token, url, params)
+            first = False
+        else:
+            data = _graph_get(access_token, url)  # nextLink는 전체 URL
+        items.extend(data.get("value", []))
+        url = data.get("@odata.nextLink")
+        if limit and len(items) >= limit:
+            return items[:limit]
+    return items
+
+
+# ---------- 수집/보고 설정 ----------
+
+SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "config", "teams_settings.json")
+DEFAULT_SETTINGS = {
+    "days": 7,
+    "chat_limit": 50,        # 상위 채팅방 수. 0 = 제한 없음(페이징)
+    "messages_per_chat": 50, # 채팅방당 최신 메시지 수. 0 = 제한 없음
+    "chat_types": ["oneOnOne", "group", "meeting"],
+    "report_scope": "mine",  # "mine"(내 메시지만) | "all"(주고받은 전체)
+}
+
+
+def load_teams_settings(path=SETTINGS_FILE):
+    """config/teams_settings.json 읽기 — 없으면 기본값."""
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        with open(path, encoding="utf-8") as f:
+            settings.update(json.load(f))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return settings
+
+
 # ---------- 토큰 관리 ----------
 
 def device_code_login(token_file=TOKEN_FILE):
@@ -317,12 +358,22 @@ class TeamsCollector:
     def enabled(self):
         return os.path.exists(self.token_file)
 
-    def collect_all_teams_activity(self, days=7):
-        """본인 Teams 채팅방의 최근 메시지 수집. 토큰 없으면 빈 리스트."""
+    def collect_all_teams_activity(self, days=None):
+        """본인 Teams 채팅방의 최근 메시지 수집. 토큰 없으면 빈 리스트.
+        수집 범위(기간·채팅 상한·메시지 상한·채팅 유형)는
+        config/teams_settings.json 설정을 따르며 없으면 기본값 사용.
+        days 인자를 주면 설정보다 우선."""
         access_token = self._token or get_access_token(self.token_file)
         if not access_token:
             return []
         self._token = access_token
+
+        settings = load_teams_settings()
+        if days is None:
+            days = settings["days"]
+        chat_limit = int(settings["chat_limit"])
+        msg_limit = int(settings["messages_per_chat"])
+        allowed_types = set(settings["chat_types"])
 
         me_name = self._me_display_name(access_token)
         since = (
@@ -331,19 +382,36 @@ class TeamsCollector:
 
         activities = []
         try:
-            chats = _graph_get(access_token, "/me/chats", {"$top": 50}).get("value", [])
+            if chat_limit <= 0 or chat_limit > 50:
+                chats = _graph_get_all(
+                    access_token, "/me/chats", {"$top": 50}, limit=chat_limit
+                )
+            else:
+                chats = _graph_get(
+                    access_token, "/me/chats", {"$top": chat_limit}
+                ).get("value", [])
         except Exception as e:
             print(f"Error listing Teams chats: {e}")
             return []
 
         for chat in chats:
+            if chat.get("chatType") not in allowed_types:
+                continue
             chat_id = chat.get("id")
             try:
-                messages = _graph_get(
-                    access_token,
-                    f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
-                    {"$top": 50},
-                ).get("value", [])
+                if msg_limit <= 0 or msg_limit > 50:
+                    messages = _graph_get_all(
+                        access_token,
+                        f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
+                        {"$top": 50},
+                        limit=msg_limit,
+                    )
+                else:
+                    messages = _graph_get(
+                        access_token,
+                        f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
+                        {"$top": msg_limit},
+                    ).get("value", [])
             except Exception as e:
                 print(f"Error reading messages for chat {chat_id}: {e}")
                 continue

@@ -801,11 +801,105 @@ class WeeklyPulseApp:
                         ],
                         spacing=8,
                     ),
+                    ft.Container(height=24),
+                    self._create_teams_settings_section(),
                 ],
                 spacing=8,
             ),
             padding=24,
         )
+
+    def _create_teams_settings_section(self):
+        """Settings 화면의 'Teams 수집·보고 설정' 섹션 — config/teams_settings.json에 저장"""
+        from teams_collector import load_teams_settings
+
+        s = load_teams_settings()
+        self.teams_settings = s
+
+        def num_field(key, label, hint):
+            return ft.TextField(
+                label=label,
+                value=str(s[key]),
+                hint_text=hint,
+                width=200,
+                on_change=lambda e: self._teams_setting_changed(key, e.control.value),
+            )
+
+        self._teams_chat_checks = {}
+        type_labels = {"oneOnOne": "1:1 채팅", "group": "그룹 채팅", "meeting": "회의 채팅"}
+        checks = []
+        for ctype, label in type_labels.items():
+            cb = ft.Checkbox(
+                label=label,
+                value=ctype in s["chat_types"],
+                on_change=lambda e, c=ctype: self._teams_type_toggled(c, e.control.value),
+            )
+            self._teams_chat_checks[ctype] = cb
+            checks.append(cb)
+
+        self.teams_scope_dropdown = ft.Dropdown(
+            label="보고서 범위",
+            value=s.get("report_scope", "mine"),
+            options=[
+                ft.dropdown.Option("mine", "내가 보낸 메시지만 요약"),
+                ft.dropdown.Option("all", "주고받은 메시지 전체 요약"),
+            ],
+            width=260,
+            on_change=lambda e: self._teams_setting_changed("report_scope", e.control.value),
+        )
+
+        row_width = self.page.window.width - 200 - 60 - 48
+        return ft.Column(
+            [
+                ft.Text("Teams 수집·보고 설정", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
+                ft.Text(
+                    "변경 사항은 다음 수집/보고서 생성부터 자동 적용됩니다. 0 = 제한 없음.",
+                    size=12, color=ft.Colors.GREY_600,
+                ),
+                ft.Row(
+                    [
+                        num_field("days", "수집 기간(일)", "기본 7"),
+                        num_field("chat_limit", "채팅방 상한", "0 = 전체"),
+                        num_field("messages_per_chat", "방당 메시지 상한", "0 = 전체"),
+                    ],
+                    spacing=16,
+                    wrap=True,
+                ),
+                ft.Row([ft.Text("수집할 채팅 유형", size=13, weight=ft.FontWeight.BOLD)] + checks, spacing=16),
+                self.teams_scope_dropdown,
+            ],
+            spacing=10,
+            width=row_width,
+        )
+
+    def _teams_setting_changed(self, key, value):
+        """Teams 숫자/범위 설정 변경 → settings dict 갱신 + 저장"""
+        if key in ("days", "chat_limit", "messages_per_chat"):
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                return
+            self.teams_settings[key] = max(0, value)
+        else:
+            self.teams_settings[key] = value
+        self._save_teams_settings()
+
+    def _teams_type_toggled(self, chat_type, checked):
+        types = set(self.teams_settings.get("chat_types", []))
+        if checked:
+            types.add(chat_type)
+        else:
+            types.discard(chat_type)
+        self.teams_settings["chat_types"] = sorted(types)
+        self._save_teams_settings()
+
+    def _save_teams_settings(self):
+        try:
+            os.makedirs("config", exist_ok=True)
+            with open("config/teams_settings.json", "w", encoding="utf-8") as f:
+                json.dump(self.teams_settings, f, indent=2, ensure_ascii=False)
+        except Exception as ex:
+            print(f"Warning: failed to save teams settings: {ex}")
 
     def _render_watch_folder_list(self, watch_paths):
         """watch_folder_list_ref 내용을 현재 watch_paths 기준으로 다시 그림"""

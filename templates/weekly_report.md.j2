@@ -22,9 +22,13 @@
 - **{{ t.name }}** ({{ t.count }}건){% if t.examples %}: {{ t.examples|join(", ") }}{% endif %}
 {% endfor %}
 {% endif %}
-{% if teams_my_message_count > 0 %}
+{% if teams_my_message_count > 0 or teams_received_count > 0 %}
 ## Teams 내 메시지 요약
-이번 주 Teams에서 내가 보낸 메시지 {{ teams_my_message_count }}건을 요약했습니다.
+{% if teams_scope == "all" %}
+이번 주 Teams에서 주고받은 메시지 {{ teams_my_message_count }}건(보낸 {{ teams_sent_count }}건 / 받은 {{ teams_received_count }}건)을 요약했습니다.
+{% else %}
+이번 주 Teams에서 내가 보낸 메시지 {{ teams_my_message_count }}건을 요약했습니다. (받은 메시지 {{ teams_received_count }}건)
+{% endif %}
 {% if teams_my_summary %}
 
 {{ teams_my_summary }}

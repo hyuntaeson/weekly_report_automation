@@ -121,6 +121,9 @@ class ReportGenerator:
             "top_projects_or_files": top_projects_or_files,
             "ai_tool_sessions": ai_tool_sessions,
             "teams_my_message_count": teams_my["count"],
+            "teams_sent_count": teams_my.get("sent", teams_my["count"]),
+            "teams_received_count": teams_my.get("received", 0),
+            "teams_scope": teams_my.get("scope", "mine"),
             "teams_my_summary": teams_my["summary"],
             "topics": topics,
             "raw_activities": recent_activities,
@@ -201,12 +204,23 @@ class ReportGenerator:
                         line += ": " + ", ".join(topic["examples"])
                     document.add_paragraph(line)
 
-            if weekly_data.get("teams_my_message_count"):
+            if weekly_data.get("teams_my_message_count") or weekly_data.get(
+                "teams_received_count"
+            ):
                 self._add_section_title(document, "Teams 내 메시지 요약")
-                document.add_paragraph(
-                    f"이번 주 Teams에서 내가 보낸 메시지 "
-                    f"{weekly_data['teams_my_message_count']}건을 요약했습니다."
-                )
+                if weekly_data.get("teams_scope") == "all":
+                    document.add_paragraph(
+                        f"이번 주 Teams에서 주고받은 메시지 "
+                        f"{weekly_data['teams_my_message_count']}건"
+                        f"(보낸 {weekly_data['teams_sent_count']}건 / "
+                        f"받은 {weekly_data['teams_received_count']}건)을 요약했습니다."
+                    )
+                else:
+                    document.add_paragraph(
+                        f"이번 주 Teams에서 내가 보낸 메시지 "
+                        f"{weekly_data['teams_my_message_count']}건을 요약했습니다."
+                        f"(받은 메시지 {weekly_data['teams_received_count']}건)"
+                    )
                 if weekly_data.get("teams_my_summary"):
                     document.add_paragraph(weekly_data["teams_my_summary"])
                 else:
@@ -425,6 +439,13 @@ class ReportGenerator:
         판별 기준: details.sender가 teams_graph_token.json의 me_display_name과
         일치하는 메시지 (신규 수집분은 details.from_me 플래그도 있지만,
         과거 데이터 호환을 위해 sender 비교를 우선 사용)."""
+        # 보고서 범위는 config/teams_settings.json의 report_scope가 결정
+        try:
+            from teams_collector import load_teams_settings
+            scope = load_teams_settings().get("report_scope", "mine")
+        except Exception:
+            scope = "mine"
+
         token_file = self.base_dir / "config" / "teams_graph_token.json"
         me_name = None
         try:
@@ -432,10 +453,11 @@ class ReportGenerator:
                 me_name = json.load(f).get("me_display_name")
         except (OSError, json.JSONDecodeError):
             pass
-        if not me_name:
-            return {"count": 0, "summary": ""}
+        if not me_name and scope == "mine":
+            return {"count": 0, "sent": 0, "received": 0, "scope": scope, "summary": ""}
 
-        texts = []
+        mine_texts, all_texts = [], []
+        sent_count = received_count = 0
         for activity in activities:
             if activity.get("source") != "teams":
                 continue
@@ -448,14 +470,25 @@ class ReportGenerator:
             if not isinstance(details, dict):
                 continue
             sender = details.get("sender")
-            if details.get("from_me") or (me_name and sender == me_name):
-                text = (details.get("text") or "").strip()
-                if text:
-                    chat = details.get("chat") or ""
-                    texts.append(f"[{chat}] {text}" if chat else text)
+            from_me = details.get("from_me") or (me_name and sender == me_name)
+            text = (details.get("text") or "").strip()
+            if not text:
+                continue
+            chat = details.get("chat") or ""
+            line = f"[{chat}] {text}" if chat else text
+            all_texts.append(line)
+            if from_me:
+                sent_count += 1
+                mine_texts.append(line)
+            else:
+                received_count += 1
 
+        texts = all_texts if scope == "all" else mine_texts
         if not texts:
-            return {"count": 0, "summary": ""}
+            return {
+                "count": 0, "sent": sent_count,
+                "received": received_count, "scope": scope, "summary": "",
+            }
 
         try:
             from llm_summarizer import LLMSummarizer
@@ -465,7 +498,11 @@ class ReportGenerator:
         except Exception as e:
             print(f"Warning: Teams message summarization failed: {e}")
             summary = None
-        return {"count": len(texts), "summary": summary or ""}
+        return {
+            "count": len(texts), "sent": sent_count,
+            "received": received_count, "scope": scope,
+            "summary": summary or "",
+        }
 
     def _cluster_topics(self, activities):
         """임베딩 클러스터링으로 주간 활동을 주제 단위로 묶는다.
