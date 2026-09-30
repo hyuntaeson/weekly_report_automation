@@ -93,7 +93,58 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
 .arch-to{color:var(--sph-gray-500);font-weight:700;}
 .arch-note{font-size:var(--fs-caption);color:var(--sph-gray-500);flex-basis:100%;}
 
-@media print{body{background:#fff;} .sph-page{box-shadow:none;border-radius:0;margin:0;page-break-after:always;}}
+
+/* 발표 모드 */
+body{padding-bottom:72px;}
+body.slide{padding-bottom:0;}
+body.slide .sph-page{display:none;}
+body.slide .sph-page.active{display:flex;min-height:calc(100vh - 48px);max-height:calc(100vh - 48px);overflow-y:auto;}
+#pres-ctrl{position:fixed;right:20px;bottom:20px;display:flex;gap:8px;align-items:center;background:rgba(0,42,91,.94);color:#fff;padding:8px 14px;border-radius:999px;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:99;font-size:13px;}
+#pres-ctrl button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:999px;padding:4px 12px;cursor:pointer;font-size:13px;font-family:var(--sph-font);}
+#pres-ctrl button:hover{background:rgba(255,255,255,.18);}
+#pres-ctrl .pgnum{min-width:56px;text-align:center;font-weight:600;font-variant-numeric:tabular-nums;}
+
+/* 시각 카드 */
+.vcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:var(--sp-3) 0;}
+.vcard{border:1px solid var(--sph-gray-300);border-radius:var(--radius-lg);padding:15px 16px;background:#fff;box-shadow:var(--shadow-1);}
+.vcard .ic{width:32px;height:32px;border-radius:8px;background:var(--sph-navy);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;margin-bottom:9px;}
+.vcard.y .ic{background:var(--sph-yellow);color:var(--sph-ink);}
+.vcard h4{margin:0 0 5px;font-size:14px;color:var(--sph-ink);}
+.vcard p{margin:0;font-size:12px;color:#4b5563;line-height:1.55;}
+
+/* 수평 플로우 */
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:var(--sp-3) 0;}
+.flow .fn{background:var(--sph-navy);color:#fff;border-radius:8px;padding:10px 13px;font-size:13px;font-weight:700;text-align:center;line-height:1.35;}
+.flow .fn.y{background:var(--sph-yellow);color:var(--sph-ink);}
+.flow .fn .sub{display:block;font-size:10.5px;font-weight:400;opacity:.8;margin-top:3px;}
+.flow .arr{color:var(--sph-gray-500);font-weight:700;font-size:16px;}
+
+/* 소스 타일 그리드 */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:var(--sp-3) 0;}
+.tile{border:1px solid var(--sph-gray-300);border-radius:10px;padding:12px 14px;background:#fff;}
+.tile .t-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:6px;}
+.tile .t-name{font-weight:700;font-size:13.5px;color:var(--sph-navy);}
+.tile .t-tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--sph-gray-100);color:var(--sph-gray-500);white-space:nowrap;}
+.tile .t-tag.g{background:#EAF1FB;color:var(--sph-blue-2);}
+.tile .t-tag.y{background:#FFF3D6;color:#9A7400;}
+.tile .t-tag.n{background:var(--sph-navy);color:#fff;}
+.tile p{margin:0;font-size:11.5px;color:#4b5563;line-height:1.5;}
+
+/* WBS 간트 */
+.wbs{margin-top:var(--sp-3);}
+.wbs-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--sph-gray-500);padding-left:150px;margin-bottom:6px;border-bottom:1px solid var(--sph-gray-300);padding-bottom:5px;}
+.wbs-row{display:flex;align-items:center;margin-bottom:10px;}
+.wbs-row .wlbl{width:140px;flex-shrink:0;font-size:12.5px;font-weight:700;color:var(--sph-ink);line-height:1.3;}
+.wbs-row .wlbl .d{display:block;font-size:10.5px;font-weight:400;color:var(--sph-gray-500);margin-top:2px;}
+.wbs-track{flex:1;position:relative;height:32px;background:var(--sph-gray-50);border-radius:6px;}
+.wbs-bar{position:absolute;top:4px;bottom:4px;border-radius:6px;background:var(--sph-navy);}
+.wbs-bar.b2{background:var(--sph-blue-3);}
+.wbs-bar.b3{background:var(--sph-blue-2);}
+.wbs-bar.b4{background:var(--sph-blue-4);}
+.wbs-bar.y{background:var(--sph-yellow);}
+.wbs-note{font-size:11.5px;color:var(--sph-gray-500);margin-top:6px;}
+
+@media print{body{background:#fff;padding-bottom:0;} .sph-page{box-shadow:none;border-radius:0;margin:0;page-break-after:always;} body.slide .sph-page{display:flex;} #pres-ctrl{display:none;}}
 </style>
 </head>
 <body>
@@ -106,9 +157,9 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
     <p class="cover-meta">
       <span class="dept">이마트24 POS팀 / IT개발혁신TF</span>
       <span class="sep">|</span>
-      <span class="date">2026.09.28</span>
+      <span class="date">2026.10.01</span>
       <span class="sep">|</span>
-      <span class="ver">Ver.1.1</span>
+      <span class="ver">Ver.1.2</span>
     </p>
   </div>
   <div class="cover-logo">
@@ -117,44 +168,50 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   </div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Overview</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span>샘플</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Overview</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현</span><span>AI</span><span>일정</span><span>효과</span><span>샘플</span></div></div>
   <h1 class="sph-title">프로젝트 목적</h1>
   <p class="sph-subtitle">왜 이 프로그램을 만들었는가</p>
-  
 <div class="sph-callout">
-  <b>매주 1회 주간회의</b>를 위해, 지난 한 주 동안 내가 수행한 작업 내용을
-  수작업 취합 없이 <b>자동으로 수집·집계·요약</b>해 보고서로 생성하는 것이 목적입니다.
+  <b>매주 1회 주간회의</b> — 지난 한 주의 작업 내용을 수작업 취합 없이
+  <b>자동 수집·집계·요약</b>해 보고서로 생성하는 것이 목적입니다.
 </div>
 <h2 class="sph-section-title">해결하려는 문제</h2>
-<ul class="sph-list">
-  <li>업무 활동이 파일시스템·Outlook·Teams·브라우저·IDE 등 <b>여러 도구에 분산</b>되어 있어 수작업 취합이 어려움</li>
-  <li>주간 단위로 "무엇을 했는지" 기억에 의존 → <b>누락·왜곡 발생</b></li>
-  <li>매주 반복되는 보고서 작성에 소요되는 시간 절감 필요</li>
-</ul>
-<h2 class="sph-section-title">목표</h2>
-<ul class="sph-list">
-  <li>활동 데이터의 <b>자동 수집</b> — PC 사용 중 백그라운드에서 무개입 수집</li>
-  <li>수집 데이터의 <b>정규화·저장</b> — SQLite에 소스/액션/시각 단위로 통합</li>
-  <li><b>AI 요약이 포함된 보고서</b> — Markdown·Word 2종 산출</li>
-  <li><b>다른 사용자도 사용 가능</b> — 개인 자격증명만 교체하면 되는 배포 구조</li>
-  <li><b>OS 제한 없이 제공</b> — Windows·macOS 어디서든 동작, 플랫폼별 기능 차이는 자동 폴백으로 흡수</li>
-</ul>
-<h2 class="sph-section-title">왜 웹이 아닌 로컬 프로그램인가</h2>
-<p style="margin-bottom:var(--sp-3);">수집 대상이 전부 <b>내 PC 안에 있기 때문</b>에, 로컬에서 실행되는 프로그램 형태가 필수입니다.</p>
-<ul class="sph-list">
-  <li><b>로컬 파일 실시간 감시</b> — Documents/Downloads 등 폴더를 백그라운드에서 감시하는 것은 웹 앱이 접근할 수 없는 영역</li>
-  <li><b>프로세스 감지</b> — "지금 VS Code·Teams가 실행 중인가"를 확인해 작업 세션을 기록하는 것도 로컬에서만 가능</li>
-  <li><b>로컬 토큰 보관</b> — 회사 인증 토큰을 외부 서버에 올리지 않고 본인 PC에만 저장</li>
-  <li><b>사내 보안 정책</b> — 업무 파일 경로·메일·채팅 기록이 회사 밖 서버로 나가지 않아 데이터 유출 우려 없음</li>
-</ul>
-
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>2 / 8</span></div>
+<div class="vcards">
+  <div class="vcard"><div class="ic">◇</div><h4>활동의 분산</h4><p>파일·Outlook·Teams·브라우저·IDE 등 여러 도구에 작업 기록이 흩어져 있어 수작업 취합이 어려움</p></div>
+  <div class="vcard"><div class="ic">◇</div><h4>기억 의존</h4><p>"지난주 뭐 했지"를 기억에 의존 → 누락·왜곡 발생</p></div>
+  <div class="vcard"><div class="ic">◇</div><h4>반복 시간</h4><p>매주 반복되는 보고서 작성에 드는 취합·서식 시간</p></div>
+</div>
+<h2 class="sph-section-title">목표 파이프라인</h2>
+<div class="flow">
+  <div class="fn">업무 활동<span class="sub">파일·메일·채팅·브라우저 등 9+ 소스</span></div>
+  <span class="arr">→</span>
+  <div class="fn">자동 수집·정제<span class="sub">백그라운드 무개입</span></div>
+  <span class="arr">→</span>
+  <div class="fn">통합 저장<span class="sub">SQLite 정규화</span></div>
+  <span class="arr">→</span>
+  <div class="fn">AI 요약·분류<span class="sub">주제 단위 재구성</span></div>
+  <span class="arr">→</span>
+  <div class="fn y">보고서 산출<span class="sub">Markdown + Word</span></div>
+</div>
+<div class="vcards" style="grid-template-columns:repeat(3,1fr)">
+  <div class="vcard y"><div class="ic">→</div><h4>개인 배포 구조</h4><p>다른 사용자도 본인 자격증명만 교체하면 동일하게 사용 가능</p></div>
+  <div class="vcard y"><div class="ic">→</div><h4>OS 제한 없음</h4><p>Windows·macOS 표준 경로 자동 탐색, 플랫폼별 수집 방식 자동 선택</p></div>
+  <div class="vcard y"><div class="ic">→</div><h4>사내 보안 준수</h4><p>활동 데이터·토큰이 회사 밖으로 나가지 않는 로컬 전용 구조</p></div>
+</div>
+<h2 class="sph-section-title">왜 로컬 프로그램인가</h2>
+<div class="vcards" style="grid-template-columns:repeat(4,1fr)">
+  <div class="vcard"><h4>파일 실시간 감시</h4><p>Documents 등 폴더 감시는 로컬 프로세스만 가능</p></div>
+  <div class="vcard"><h4>프로세스 감지</h4><p>VS Code·Teams 실행 여부로 작업 세션 기록</p></div>
+  <div class="vcard"><h4>토큰 로컬 보관</h4><p>회사 인증 토큰을 본인 PC에만 저장</p></div>
+  <div class="vcard"><h4>데이터 유출 제로</h4><p>메일·채팅·파일 경로가 외부 서버로 나가지 않음</p></div>
+</div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>2 / 9</span></div>
 </section>
+
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Diagram</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span>샘플</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Diagram</span><div class="sph-nav"><span>목적</span><span class="is-active">구성도</span><span>구조</span><span>구현</span><span>AI</span><span>일정</span><span>효과</span><span>샘플</span></div></div>
   <h1 class="sph-title">시스템 구성도</h1>
   <p class="sph-subtitle">수집부터 보고서 산출까지의 전체 흐름</p>
-
 <div class="arch">
   <div class="arch-layer">
     <div class="arch-label accent">사용자</div>
@@ -191,100 +248,120 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
     <div class="arch-body"><span class="arch-chip yellow">Markdown 보고서</span><span class="arch-chip yellow">Word 보고서</span><span class="arch-note">주간회의용 자료</span></div>
   </div>
 </div>
-
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>3 / 8</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>3 / 9</span></div>
 </section>
+
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Architecture</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span>샘플</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Architecture</span><div class="sph-nav"><span>목적</span><span>구성도</span><span class="is-active">구조</span><span>구현</span><span>AI</span><span>일정</span><span>효과</span><span>샘플</span></div></div>
   <h1 class="sph-title">시스템 구조</h1>
-  <p class="sph-subtitle">수집 → 저장 → 생성의 4계층 파이프라인</p>
-  
+  <p class="sph-subtitle">데이터 흐름과 AI 적용 지점</p>
 <h2 class="sph-section-title">데이터 흐름</h2>
-<div class="sph-callout">
-  활동 발생 → 수집기가 이벤트 정규화 → SQLite 적재(중복 제거) → 주간 보고 시
-  노이즈 필터·중복 제거 후 집계 → <b>AI 분석(주제 분류·요약)</b> → Markdown/Word 출력
+<div class="flow">
+  <div class="fn">활동 발생<span class="sub">파일 저장·메일·채팅·방문</span></div>
+  <span class="arr">→</span>
+  <div class="fn">이벤트 정규화<span class="sub">소스별 수집기</span></div>
+  <span class="arr">→</span>
+  <div class="fn">SQLite 적재<span class="sub">중복 제거</span></div>
+  <span class="arr">→</span>
+  <div class="fn">주간 집계<span class="sub">노이즈 필터</span></div>
+  <span class="arr">→</span>
+  <div class="fn y">AI 분석<span class="sub">주제 분류·요약</span></div>
+  <span class="arr">→</span>
+  <div class="fn y">MD / Word</div>
 </div>
 <h2 class="sph-section-title">AI 적용 계층</h2>
-<ul class="sph-list">
-  <li><b>주제별 자동 분류</b> — 임베딩 클러스터링으로 흩어진 활동을 "의미"로 묶어, 보고서를 단순 나열이 아닌 <b>주제(작업) 단위</b>로 재구성</li>
-  <li><b>임베딩 영속 저장</b> — 활동 벡터를 누적 저장해 재계산 없이 재사용, "지난주 유사 작업" 검색의 기반이 됨</li>
-  <li><b>요약 체인 표준화</b> — 소스별 프롬프트를 체인으로 관리해 요약 품질을 일원화</li>
-  <li><b>파이프라인 구조화</b> — 수집→필터→분석→집계→출력을 단계별 그래프로 구성해 조건 분기·폴백·단계별 확장 용이</li>
-</ul>
+<div class="vcards" style="grid-template-columns:repeat(2,1fr)">
+  <div class="vcard"><div class="ic">1</div><h4>주제별 자동 분류</h4><p>임베딩 클러스터링으로 흩어진 활동을 "의미"로 묶어 보고서를 주제(작업) 단위로 재구성</p></div>
+  <div class="vcard"><div class="ic">2</div><h4>임베딩 영속 저장</h4><p>활동 벡터를 누적 저장해 재계산 없이 재사용 — "지난주 유사 작업" 검색의 기반</p></div>
+  <div class="vcard"><div class="ic">3</div><h4>요약 체인 표준화</h4><p>소스별 프롬프트를 체인으로 관리해 요약 품질을 일원화, 모델 교체는 설정만 변경</p></div>
+  <div class="vcard"><div class="ic">4</div><h4>파이프라인 구조화</h4><p>수집→필터→분석→집계→출력을 그래프로 구성해 조건 분기·폴백·단계별 확장 용이</p></div>
+</div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>4 / 9</span></div>
+</section>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>4 / 8</span></div>
-</section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Implementation</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span>샘플</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Implementation</span><div class="sph-nav"><span>목적</span><span>구성도</span><span>구조</span><span class="is-active">구현</span><span>AI</span><span>일정</span><span>효과</span><span>샘플</span></div></div>
   <h1 class="sph-title">구현에 필요한 요소</h1>
-  <p class="sph-subtitle">각 수집 소스별 접근 방식과 보안 처리</p>
-  
-<table class="sph-table">
-  <thead><tr><th>소스</th><th>수집 방식</th><th>비고</th></tr></thead>
-  <tbody>
-    <tr><td>파일시스템</td><td>watchdog 실시간 감시 + 오피스·텍스트 내용 변경분 추출(docx/pptx/xlsx/md/txt)</td><td>사내 DRM으로 보호된 문서는 내용 추출이 제한될 수 있어 별도 대응 필요</td></tr>
-    <tr><td>브라우저</td><td>Chrome Manifest V3 확장 → 로컬 HTTP 서버(127.0.0.1:5757) POST → SQLite 적재</td><td>인증 토큰·OAuth 콜백 URL은 전송 전 필터링</td></tr>
-    <tr><td>IDE</td><td>VS Code/Orca/Claude Code 로그·storage 파싱</td><td>OS별 표준 경로 자동 탐색, AI 코딩 활동 별도 집계</td></tr>
-    <tr><td>Outlook</td><td>Outlook COM(pywin32)으로 메일·캘린더 수집, 미실행 시 Graph 자동 폴백</td><td>Teams 회의 링크·참석자 감지</td></tr>
-    <tr><td>Teams</td><td>Microsoft Graph(디바이스 코드 위임권한) — 채팅·일정·참석자·1:1 대화 상대방 해석</td><td>토큰 로컬 저장·자동 갱신</td></tr>
-    <tr><td>OneNote</td><td>Microsoft Graph — 노트북/섹션 단위 수정 이력 수집(같은 토큰 재사용)</td><td>페이지 본문은 권한 승인 필요 — 파일 감시가 .one 수정 이벤트도 병행 커버</td></tr>
-    <tr><td>Slack/Confluence</td><td>각 사 REST API + 토큰</td><td>토큰 파일 분리 관리, Confluence 페이지 본문 요약 수집</td></tr>
-    <tr><td><b>AI 분석</b></td><td>사내 LiteLLM 프록시 — 채팅 요약(haiku-4-5) + 임베딩(text-embedding-3-large) → 의미 클러스터링</td><td>벡터는 SQLite에 영속 저장해 재사용</td></tr>
-    <tr><td><b>보고서 생성</b></td><td>LangGraph 파이프라인 → Jinja2(Markdown) + minimal docx 빌더(Word)</td><td>활동 없는 주간은 AI 분석 자동 스킵</td></tr>
-  </tbody>
-</table>
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>5 / 8</span></div>
+  <p class="sph-subtitle">9+ 수집 소스와 접근 방식</p>
+<div class="tiles">
+  <div class="tile"><div class="t-top"><span class="t-name">파일시스템</span><span class="t-tag">감시</span></div><p>watchdog 실시간 감시 + 오피스·텍스트 변경분 추출. DRM 재암호화 문서도 Office COM으로 내용 읽기(Win)</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">브라우저</span><span class="t-tag">확장</span></div><p>Chrome 확장(MV3)이 방문 기록을 로컬 서버로 전송. 인증 URL은 전송 전 필터링</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">IDE</span><span class="t-tag">로그</span></div><p>VS Code·Orca·Claude Code 로그·storage 파싱. AI 코딩 활동 별도 집계</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">Outlook</span><span class="t-tag g">COM/Graph</span></div><p>메일·캘린더 수집, COM 실패 시 Graph 자동 폴백. Teams 회의 링크·참석자 감지</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">Teams</span><span class="t-tag g">Graph</span></div><p>채팅·일정·참석자·1:1 대화 상대방 실명 해석. 디바이스 로그인 위임권한</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">OneNote</span><span class="t-tag g">Graph</span></div><p>노트북·섹션 수정 이력(같은 토큰 재사용). .one 파일 감시 병행</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">Slack</span><span class="t-tag">REST</span></div><p>채널 메시지 수집 — 토큰 파일 분리 관리</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">Confluence</span><span class="t-tag">REST</span></div><p>페이지·활동 수집, 본문 요약 반영</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">AI 툴</span><span class="t-tag">파싱</span></div><p>Claude Code·Devin 세션 로그 수집 — AI 활용 작업도 활동으로 집계</p></div>
+</div>
+<div class="flow" style="margin-top:var(--sp-4)">
+  <div class="fn">수집 이벤트</div>
+  <span class="arr">→</span>
+  <div class="fn">AI 분석<span class="sub">사내 LiteLLM — 요약 + 임베딩</span></div>
+  <span class="arr">→</span>
+  <div class="fn">보고서 파이프라인<span class="sub">LangGraph 그래프</span></div>
+  <span class="arr">→</span>
+  <div class="fn y">Markdown + Word</div>
+</div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>5 / 9</span></div>
 </section>
+
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">AI Technologies</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span>샘플</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">AI Technologies</span><div class="sph-nav"><span>목적</span><span>구성도</span><span>구조</span><span>구현</span><span class="is-active">AI</span><span>일정</span><span>효과</span><span>샘플</span></div></div>
   <h1 class="sph-title">활용하는 AI 기술</h1>
   <p class="sph-subtitle">사내 인프라와 AI 기술의 결합</p>
-  
-<table class="sph-table">
-  <thead><tr><th>기술</th><th>활용 방법</th><th>효과</th></tr></thead>
-  <tbody>
-    <tr><td><b>사내 DevX MCP</b><br>(sm-ops-pub-mcp)</td><td>Teams/메일 조회 도구 분석 → 동일한 위임권한 인증 방식을 Python으로 재구현</td><td>사내 표준 인증 체계 재활용, Azure 앱 등록 불필요</td></tr>
-    <tr><td><b>사내 LiteLLM 프록시</b><br>(haiku-4-5 · text-embedding-3-large)</td><td>Chat Completions로 소스별 텍스트 요약(Teams/메일/문서) + 임베딩 엔드포인트로 활동 벡터화 → 의미 클러스터링</td><td>보고서를 단순 로그 나열이 아닌 의미 단위 요약으로. 외부 API 키 없이 사내 프록시만으로 요약·임베딩 모두 해결</td></tr>
-    <tr><td><b>Microsoft first-party 인증</b><br>(디바이스 로그인)</td><td>Microsoft Office 같은 자사 앱의 공용 인증 경로를 이용해, Azure에 별도 앱 등록·관리자 승인 없이 개인 로그인 1회만으로 Teams/일정 데이터 접근. 토큰은 자동 갱신</td><td>보안 정책상 막혀있던 앱 등록 절차를 우회, 누구든 본인 계정 로그인만으로 즉시 사용 가능</td></tr>
-    <tr><td><b>AI 코딩 에이전트</b><br>(Claude Code/Devin)</td><td>프로젝트 설계·구현·테스트·문서화 전 과정을 에이전트 협업으로 개발</td><td>개발 속도 향상, 테스트·결정기록 자동 축적</td></tr>
-    <tr><td><b>자체 MCP 개발</b></td><td>Slack 대화 조회 MCP를 devx-mcp.yaml 규격으로 제작, 사내 마켓플레이스 배포</td><td>사내 다른 사용자/에이전트가 재사용 가능한 자산화</td></tr>
-  </tbody>
-</table>
-<h2 class="sph-section-title">교육 기술의 실전 적용</h2>
-<table class="sph-table">
-  <thead><tr><th>기술</th><th>적용 방법</th><th>기대 효과</th></tr></thead>
-  <tbody>
-    <tr>
-      <td><b>임베딩 + VectorDB</b><br>(text-embedding-3-large)</td>
-      <td>활동(채팅·파일·메일·방문)을 벡터로 변환해 SQLite 벡터 테이블에 축적(재계산 없이 재사용) → 코사인 유사도로 비슷한 의미의 활동끼리 자동 분류 + LLM이 주제명 생성</td>
-      <td>파일·채팅·브라우저에 흩어진 동일 작업이 "주제별"로 묶여 보고서 가독성 향상 · 주간 축적으로 "지난주 유사 작업" 검색</td>
-    </tr>
-    <tr>
-      <td><b>RAG</b><br>(의미 검색+요약)</td>
-      <td>주간보고서 생성 단계에서 적용 — DB 활동 조회 → 노이즈 필터 → <b>[RAG 검색] 의미 기준으로 관련 활동만 추출</b> → <b>[LLM] 그 활동들만 요약</b> → 보고서 섹션에 삽입. 미리 정의한 질의("장애 대응", "교육·회의", "문서 작업" 등)로 섹션별 내용이 자동 생성됨</td>
-      <td>키워드가 아닌 <b>의미 기준</b>으로 관련 활동 추출 — "장애"라는 단어가 없어도 서버 이슈 채팅·패치 파일·장애회의가 잡힘. 나열형 보고서 → 목적 단위로 분류된 요약 보고서</td>
-    </tr>
-    <tr>
-      <td><b>LangChain / LCEL</b><br>(요약 체인 표준화)</td>
-      <td>LLM 호출을 <b>프롬프트 → 모델 → 파서</b> 체인으로 표준화. 모델 교체는 설정값만 변경, 소스별(파일/메일/채팅) 프롬프트 템플릿 분리, 재시도·폴백 로직 체인 내장</td>
-      <td>모델·프롬프트 변경이 코드 수정 없이 가능, 요약 품질 일원화</td>
-    </tr>
-    <tr>
-      <td><b>LangGraph</b><br>(파이프라인 구조화)</td>
-      <td>수집→노이즈 필터→소스별 요약→병합→출력을 노드/엣지 그래프로 구성. LLM 실패 시 폴백 분기를 그래프 엣지로 표현</td>
-      <td>단계별 오류 대응이 명확하고, 향후 새 수집 소스·요약 단계 추가 시 노드만 붙이면 되는 확장 가능한 구조</td>
-    </tr>
-  </tbody>
-</table>
-<div class="sph-callout">
-  외부 인프라 추가 없이 <b>사내 MCP·LLM 프록시(임베딩 포함)·표준 OAuth</b>만으로
-  개인 수준의 AI 활용 파이프라인을 구축하는 것이 이 프로젝트의 핵심 접근법입니다.
+<h2 class="sph-section-title">사내 인프라 활용</h2>
+<div class="vcards" style="grid-template-columns:repeat(4,1fr)">
+  <div class="vcard"><h4>DevX MCP</h4><p>Teams/메일 조회 도구 분석 → 동일 위임권한 인증을 Python으로 재구현</p></div>
+  <div class="vcard"><h4>LiteLLM 프록시</h4><p>요약(haiku-4-5)·임베딩(text-embedding-3-large) — 외부 API 키 없이 사내 프록시만 사용</p></div>
+  <div class="vcard"><h4>MS 공용 인증</h4><p>자사 앱 인증 경로 활용 — 앱 등록 없이 개인 로그인 1회로 Teams/일정 접근</p></div>
+  <div class="vcard"><h4>자체 MCP 개발</h4><p>Slack 조회 MCP를 사내 규격으로 제작·마켓플레이스 배포</p></div>
 </div>
+<h2 class="sph-section-title">교육 기술의 실전 적용</h2>
+<div class="vcards" style="grid-template-columns:repeat(2,1fr)">
+  <div class="vcard y"><div class="ic">E</div><h4>임베딩 + VectorDB</h4><p>활동을 벡터화해 SQLite에 축적 → 코사인 유사도로 의미 단위 자동 분류 + LLM 주제명 생성</p></div>
+  <div class="vcard y"><div class="ic">R</div><h4>RAG</h4><p>보고서 생성 시 의미 기준으로 관련 활동만 검색해 섹션별 내용 자동 생성</p></div>
+  <div class="vcard y"><div class="ic">L</div><h4>LangChain / LCEL</h4><p>프롬프트→모델→파서 체인 표준화 — 모델·프롬프트 변경을 코드 수정 없이</p></div>
+  <div class="vcard y"><div class="ic">G</div><h4>LangGraph</h4><p>수집→필터→요약→병합→출력을 노드/엣지 그래프로 — 실패 폴백·확장 용이</p></div>
+</div>
+<div class="flow">
+  <div class="fn">활동 DB</div><span class="arr">→</span>
+  <div class="fn">의미 검색 (RAG)<span class="sub">"장애 대응" 등 질의</span></div><span class="arr">→</span>
+  <div class="fn">LLM 요약</div><span class="arr">→</span>
+  <div class="fn y">보고서 섹션</div>
+</div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>6 / 9</span></div>
+</section>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>6 / 8</span></div>
+<section class="sph-page">
+  <div class="sph-header"><span class="sph-kicker">Schedule</span><div class="sph-nav"><span>목적</span><span>구성도</span><span>구조</span><span>구현</span><span>AI</span><span class="is-active">일정</span><span>효과</span><span>샘플</span></div></div>
+  <h1 class="sph-title">추진 일정 (WBS)</h1>
+  <p class="sph-subtitle">2026.10.01 착수 → 2026.10.21 완료 · 총 3주</p>
+<div class="wbs">
+  <div class="wbs-axis"><span>10/1</span><span>10/6</span><span>10/11</span><span>10/16</span><span>10/21</span></div>
+  <div class="wbs-row"><div class="wlbl">1. 설계·분석<span class="d">10/1 – 10/6</span></div><div class="wbs-track"><div class="wbs-bar" style="left:0.0%;width:28.6%"></div></div></div>
+  <div class="wbs-row"><div class="wlbl">2. 개발 — 수집 기반<span class="d">10/7 – 10/16</span></div><div class="wbs-track"><div class="wbs-bar b2" style="left:28.6%;width:47.6%"></div></div></div>
+  <div class="wbs-row"><div class="wlbl">3. 개발 — SaaS 연동<span class="d">10/7 – 10/16</span></div><div class="wbs-track"><div class="wbs-bar b3" style="left:28.6%;width:47.6%"></div></div></div>
+  <div class="wbs-row"><div class="wlbl">4. 개발 — AI·보고서·GUI<span class="d">10/12 – 10/16</span></div><div class="wbs-track"><div class="wbs-bar b4" style="left:52.4%;width:23.8%"></div></div></div>
+  <div class="wbs-row"><div class="wlbl">5. AI 테스트/검증<span class="d">10/19 – 10/20</span></div><div class="wbs-track"><div class="wbs-bar y" style="left:85.7%;width:9.5%"></div></div></div>
+  <div class="wbs-row"><div class="wlbl">6. 사용자 테스트/검증<span class="d">10/19 – 10/20</span></div><div class="wbs-track"><div class="wbs-bar y" style="left:85.7%;width:9.5%"></div></div></div>
+  <div class="wbs-row"><div class="wlbl">7. 완료·발표<span class="d">10/21</span></div><div class="wbs-track"><div class="wbs-bar y" style="left:95.2%;width:4.8%"></div></div></div>
+</div>
+<h2 class="sph-section-title">단계별 산출물</h2>
+<div class="tiles" style="grid-template-columns:repeat(3,1fr)">
+  <div class="tile"><div class="t-top"><span class="t-name">1. 설계·분석</span></div><p>수집 소스 목록·접근 방식 확정 / DB 스키마·아키텍처 설계 / 파일 감시·Graph 인증 POC</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">2. 개발 — 수집 기반</span><span class="t-tag">병렬</span></div><p>파일시스템·IDE·브라우저 수집기 + SQLite 적재·노이즈 정제</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">3. 개발 — SaaS 연동</span><span class="t-tag">병렬</span></div><p>Outlook·Teams·OneNote·Slack·Confluence 연동 (Graph·COM·REST)</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">4. 개발 — AI·보고서</span><span class="t-tag">병렬</span></div><p>LiteLLM 요약·임베딩·클러스터링 + LangGraph 파이프라인 + Flet GUI</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">5. AI 테스트/검증</span></div><p>요약·분류 품질 검증, 시나리오 자동 테스트(수집→생성 전 구간)</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">6. 사용자 테스트/검증</span></div><p>실사용 데이터로 보고서 생성·육안 검토 → 불일치·노이즈 수정</p></div>
+  <div class="tile"><div class="t-top"><span class="t-name">7. 완료·발표</span></div><p>문서화·배포 패키징·최종 보고</p></div>
+</div>
+<p class="wbs-note">※ 개발은 3개 트랙 병렬 진행(10/7–10/16, 실질 1주), 테스트는 AI·사용자 두 축 병행. 공휴일(개천절 10/3, 한글날 10/9)·주말을 버퍼로 포함.</p>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>7 / 9</span></div>
 </section>
 <section class="sph-page">
-  <div class="sph-header"><span class="sph-kicker">Expected Impact</span><div class="sph-nav"><span class="is-active">목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span>샘플</span></div></div>
+  <div class="sph-header"><span class="sph-kicker">Expected Impact</span><div class="sph-nav"><span>목적</span><span>구성도</span><span>구조</span><span>구현</span><span>AI</span><span>일정</span><span class="is-active">효과</span><span>샘플</span></div></div>
   <h1 class="sph-title">기대 효과</h1>
   <p class="sph-subtitle">자동화가 만들어내는 변화</p>
   
@@ -303,11 +380,9 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
   <li><b>사내 AI 활용 사례</b> — MCP·LLM 프록시·OAuth의 실무 결합 레퍼런스로 기능</li>
 </ul>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>7 / 8</span></div>
-</section>
-
-<section class="sph-page" id="p8">
-  <div class="sph-header"><span class="sph-kicker">Sample</span><div class="sph-nav"><span>목적</span><span>구성도</span><span>구조</span><span>구현 요소</span><span>AI 기술</span><span>기대 효과</span><span class="is-active">샘플</span></div></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>8 / 9</span></div>
+</section><section class="sph-page" id="p8">
+  <div class="sph-header"><span class="sph-kicker">Sample</span><div class="sph-nav"><span>목적</span><span>구성도</span><span>구조</span><span>구현</span><span>AI</span><span>일정</span><span>효과</span><span class="is-active">샘플</span></div></div>
   <h1 class="sph-title">실행 화면 (샘플)</h1>
   <p class="sph-subtitle">WeeklyPulse 대시보드 — 수집된 앱별 활동 현황과 주간 요약, 보고서 생성 버튼</p>
 <div style="border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 10px 30px rgba(0,0,0,.15);margin-top:8px">
@@ -315,7 +390,49 @@ body{font-family:var(--sph-font);font-size:var(--fs-body);line-height:1.6;color:
 </div>
 <p style="margin-top:10px;font-size:12.5px;color:#6b7280">※ 프로토타입 실행 화면 — 앱별 Last active·주간 추적 시간·활성 툴 수·최다 사용 툴 표시. &quot;Generate Weekly Report&quot; 버튼으로 보고서 즉시 생성</p>
 
-  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>8 / 8</span></div>
+  <div class="sph-footer"><span class="sph-ci">SPHAROS</span><span>9 / 9</span></div>
 </section>
+<div id="pres-ctrl">
+  <button onclick="go(-1)" title="이전 (←)">◀</button>
+  <span class="pgnum" id="pgnum"></span>
+  <button onclick="go(1)" title="다음 (→)">▶</button>
+  <button onclick="toggleSlide()" id="modebtn">발표 모드</button>
+  <button onclick="toggleFs()" title="전체화면 (F)">⛶</button>
+</div>
+<script>
+(function(){
+  var pages=document.querySelectorAll('.sph-page'),cur=0,slide=false;
+  var num=document.getElementById('pgnum'),btn=document.getElementById('modebtn');
+  function paint(){
+    pages.forEach(function(p,i){p.classList.toggle('active',i===cur)});
+    num.textContent=(cur+1)+' / '+pages.length;
+  }
+  window.go=function(d){
+    cur=Math.min(pages.length-1,Math.max(0,cur+d));paint();
+    if(slide){window.scrollTo(0,0);}
+    else{pages[cur].scrollIntoView({behavior:'smooth',block:'start'});}
+  };
+  window.toggleSlide=function(){
+    slide=!slide;
+    document.body.classList.toggle('slide',slide);
+    btn.textContent=slide?'목록 보기':'발표 모드';
+    if(slide&&!document.fullscreenElement){
+      document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();
+    }
+    paint();window.scrollTo(0,0);
+  };
+  window.toggleFs=function(){
+    if(!document.fullscreenElement){document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();}
+    else{document.exitFullscreen&&document.exitFullscreen();}
+  };
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='PageDown'){go(1);}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(-1);}
+    else if(e.key==='f'||e.key==='F'){toggleFs();}
+    else if(e.key==='Escape'&&slide){toggleSlide();}
+  });
+  paint();
+})();
+</script>
 </body>
 </html>

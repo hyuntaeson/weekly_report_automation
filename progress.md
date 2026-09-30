@@ -115,6 +115,16 @@
 - `.one` 파일 자체는 기존 파일 감시에서 이미 수정 이벤트로 잡힘 (Documents 감시 경로에 포함)
 - IntegratedCollector에 30분 주기 수집 스레드 추가, GUI 소스 매핑(onenote→OneNote), scenario_test COL-11 추가
 
+### 16. 보고자료 개편 + GUI 재구성 (2026-09-30)
+- **`weekly_report_automation_overview.html` 9페이지 재구성**: 텍스트 표/목록 → 시각 중심
+  - 목적: 문제 3카드 + 목표 수평 플로우 + "왜 로컬" 4카드
+  - 구조: 데이터 흐름 수평 플로우 + AI 계층 4카드
+  - 구현 요소: 표 → 소스 타일 그리드 9장 (방식 태그 + 한 줄 설명)
+  - AI 기술: 사내 인프라 4카드 + 교육 기술 4카드 + RAG 미니 플로우
+  - **WBS 페이지 추가**: 2026-10-01 착수 → 10-21 완료, 간트 바 스타일. 설계(10/1-6) → 개발 3트랙 병렬(수집기반/SaaS연동/AI·보고서, 10/7-16) → AI 테스트+사용자 테스트 병행(10/19-20) → 완료·발표(10/21)
+- **발표 모드**: 우하단 컨트롤러(◀ ▶·페이지 표시·발표 모드·전체화면), 키보드 ←/→/PgUp/PgDn 이동, F=전체화면, 발표 모드=한 페이지씩 + 자동 전체화면, 인쇄 시 전체 출력
+- **GUI 재구성** (`2ba72af`): 추적 자동 시작(Start Tracking 버튼 폐지 → "Tracking Active" 배지), 사이드바를 Dashboard+Settings로 축소(미구현 Tracked Apps/Reports 제거), Active Work Sessions에 OneNote 추가, Collect 수동 버튼 4개 제거(자동 수집이라 불필요), 하단 보고서 생성 패널·미리보기 버튼 제거 → Weekly Summary 하단에 전폭 Generate Weekly Report 버튼 (스크롤 없이 노출)
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **DRM 내용 추출 (2026-09-29 부분 해소)**: Windows + Office 설치 환경에서는 COM으로 실제 내용 추출 동작 확인 (decisions #37). macOS는 수정 이벤트만 기록 — 고도화 후보로 사내 DevX `DocumentLoader.yaml` 워크플로우(파일 업로드 → content 반환 API가 있다면) 검증 여지 남김
@@ -123,11 +133,8 @@
 ## 🎯 다음 할 일
 
 ### 최우선
-0. **보고자료(`weekly_report_automation_overview.html`) 개편** (2026-09-29 요청, 다음 세션)
-   - 텍스트 위주 페이지 → 플로우차트·다이어그램 등 시각 자료 중심 재구성
-   - WBS 일정 페이지 추가 — 설계+개발+테스트·검증 합쳐 **총 1주**, 처음 시작 기준
-   - 프레젠테이션 모드: 전체화면 버튼 + 좌우 화살표/키보드 방향키 페이지 이동
-   - 잡다: DRM 문구 갱신(Windows COM으로 내용 추출 됨), 네비 is-active 정리
+0. ~~**보고자료 개편**~~ ✅ **완료 (2026-09-30)** — 시각화 재구성 + WBS(10/1-10/21) + 발표 모드
+   - 남은 것: 보고서 결과물 이미지(실제 산출 보고서 스샷) 추가 검토 중
 1. ~~**브라우저 활동 실제 수집 확인**~~ ✅ **완료 (2026-09-28)**
 2. **Word/PPT 파일도 실제 MS Word/PowerPoint에서 정상 열람되는지 사용자 육안 확인** — 사내 DRM 재암호화 후에도 실사용에는 문제없는지 검증 필요 (코드로는 검증 불가)
 
