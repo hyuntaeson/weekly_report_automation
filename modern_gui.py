@@ -845,7 +845,7 @@ class WeeklyPulseApp:
                 ft.dropdown.Option("all", "주고받은 메시지 전체 요약"),
             ],
             width=260,
-            on_change=lambda e: self._teams_setting_changed("report_scope", e.control.value),
+            on_select=lambda e: self._teams_setting_changed("report_scope", e.control.value),
         )
 
         row_width = self.page.window.width - 200 - 60 - 48
