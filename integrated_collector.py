@@ -15,6 +15,7 @@ from ai_tool_collector import AIToolCollector
 from confluence_collector import ConfluenceCollector
 from teams_collector import TeamsCollector
 from onenote_collector import OneNoteCollector
+from sharepoint_collector import SharePointCollector
 from database import ActivityDatabase
 from browser_activity_server import BrowserActivityServer
 
@@ -38,6 +39,7 @@ class IntegratedCollector:
         self.confluence_collector = ConfluenceCollector(db_path)
         self.teams_collector = TeamsCollector(db_path)
         self.onenote_collector = OneNoteCollector(db_path)
+        self.sharepoint_collector = SharePointCollector(db_path)
 
         # Browser activity server (optional)
         self.browser_server = None
@@ -50,6 +52,7 @@ class IntegratedCollector:
         self.confluence_collection_interval = 1800  # 30 minutes
         self.teams_collection_interval = 1800  # 30 minutes
         self.onenote_collection_interval = 1800  # 30 minutes
+        self.sharepoint_collection_interval = 1800  # 30 minutes
 
         # Control flags
         self.is_running = False
@@ -104,6 +107,13 @@ class IntegratedCollector:
         )
         onenote_thread.start()
         self.collection_threads.append(onenote_thread)
+
+        # Start SharePoint collector thread (동일 Graph 토큰 재사용)
+        sharepoint_thread = threading.Thread(
+            target=self.sharepoint_collection_loop, daemon=True
+        )
+        sharepoint_thread.start()
+        self.collection_threads.append(sharepoint_thread)
 
         # Start browser activity server if enabled
         if self.enable_browser_server:
@@ -280,6 +290,23 @@ class IntegratedCollector:
 
             # Wait for next collection
             time.sleep(self.onenote_collection_interval)
+
+    def sharepoint_collection_loop(self):
+        """Continuous SharePoint/OneDrive file activity collection loop"""
+        while self.is_running:
+            try:
+                sp_activities = self.sharepoint_collector.collect_activity(days=1)
+                if sp_activities:
+                    count = self.sharepoint_collector.save_to_database(
+                        sp_activities
+                    )
+                    print(f"Saved {count} SharePoint activities to database")
+
+            except Exception as e:
+                print(f"Error in SharePoint collection: {e}")
+
+            # Wait for next collection
+            time.sleep(self.sharepoint_collection_interval)
 
     def stop(self):
         """Stop all collectors"""

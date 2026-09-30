@@ -445,9 +445,13 @@ class ReportGenerator:
             settings = load_teams_settings()
             scope = settings.get("report_scope", "mine")
             work_only = bool(settings.get("work_only", True))
+            excluded = settings.get("excluded_chats", [])
         except Exception:
             scope = "mine"
             work_only = False
+            excluded = []
+        excluded_ids = {c.get("id") for c in excluded if isinstance(c, dict)}
+        excluded_titles = {c.get("title") for c in excluded if isinstance(c, dict)}
 
         token_file = self.base_dir / "config" / "teams_graph_token.json"
         me_name = None
@@ -471,6 +475,9 @@ class ReportGenerator:
                 except (json.JSONDecodeError, TypeError):
                     continue
             if not isinstance(details, dict):
+                continue
+            # Settings에서 제외한 채팅방은 요약 대상이 아님 (id 우선, 과거 데이터는 제목으로)
+            if details.get("chat_id") in excluded_ids or details.get("chat") in excluded_titles:
                 continue
             sender = details.get("sender")
             from_me = details.get("from_me") or (me_name and sender == me_name)

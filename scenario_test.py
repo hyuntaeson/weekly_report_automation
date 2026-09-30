@@ -247,6 +247,18 @@ def t_onenote():
         return fail(str(e)[:80])
 
 
+def t_sharepoint():
+    if not os.path.exists("config/teams_graph_token.json"):
+        return skip("토큰 없음")
+    from sharepoint_collector import SharePointCollector
+    col = SharePointCollector()
+    try:
+        acts = col.collect_activity(days=7)
+        return ok(f"SharePoint/OneDrive 수정 파일 {len(acts)}건")
+    except Exception as e:
+        return fail(str(e)[:80])
+
+
 def t_file_watcher_watchdirs():
     cfg = "config/watch_config.json"
     if not os.path.exists(cfg):
@@ -472,6 +484,7 @@ TESTS = [
     ("COL-09", "수집", "Slack 설정 존재", t_slack),
     ("COL-10", "수집", "감시 폴더 설정", t_file_watcher_watchdirs),
     ("COL-11", "수집", "OneNote 수집(라이브)", t_onenote),
+    ("COL-12", "수집", "SharePoint/OneDrive 수집(라이브)", t_sharepoint),
 
     ("PROC-01", "데이터 가공", "회의 중복 제거(teams 우선)", t_meeting_dedupe),
     ("PROC-02", "데이터 가공", "일시 파일(created+deleted) 제거", t_transient_files),

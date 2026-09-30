@@ -132,6 +132,13 @@
 - **업무 관련 선별(work_only, 기본 ON)**: 요약 전 LLM이 업무 관련 메시지만 선별 — 인사·잡담·이모티콘 제외. 실패 시 전체 유지 폴백
 - GUI 성능: 시작 시간 ~10s→~2.2s (lazy import + 프로세스 단일 스캔 + pyenv shim 우회 배치)
 
+### 18. SharePoint/OneDrive 수집 + 제외 채팅방 설정 (2026-09-30)
+- `sharepoint_collector.py` 신규: 동일 Graph 토큰 재사용(Files.Read.All). `/me/drive/recent` + `/me/drive/sharedWithMe`에서 기간 내 수정 파일 수집 → `source='sharepoint'` (파일명·수정자·webUrl·폴더 기록, 본문은 안 읽음)
+- 공유 링크 디코딩(`u!`+base64url)으로 임의 공유 파일의 driveItem도 해석 가능 — 샘플 파일 접근 확인
+- IntegratedCollector에 30분 주기 스레드 추가, GUI 소스 매핑(sharepoint→SharePoint), scenario COL-12 추가
+- **제외 채팅방 설정**: `excluded_chats`(id+제목) — 수집 시 스킵 + 보고서에서도 제외(과거 데이터 포함). Settings에서 "채팅방 목록 불러오기" 버튼으로 체크 선택
+- **수집 속도 최적화**: 전체 채팅방(실측 903개) 중 `lastUpdatedDateTime`이 수집 기간 이전인 방은 메시지 조회 생략 — 무제한 페이징 도입 후 생긴 수백 회 API 호출 문제 해소. list_chats는 멤버 조회 병렬화(8 workers)
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **DRM 내용 추출 (2026-09-29 부분 해소)**: Windows + Office 설치 환경에서는 COM으로 실제 내용 추출 동작 확인 (decisions #37). macOS는 수정 이벤트만 기록 — 고도화 후보로 사내 DevX `DocumentLoader.yaml` 워크플로우(파일 업로드 → content 반환 API가 있다면) 검증 여지 남김

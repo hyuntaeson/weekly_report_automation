@@ -244,6 +244,7 @@ class WeeklyPulseApp:
             "orca": "Orca",
             "filesystem": "Files",
             "onenote": "OneNote",
+            "sharepoint": "SharePoint",
         }
         self.total_hours = f"{hours} hrs"
         self.active_tools = sum(
@@ -856,6 +857,12 @@ class WeeklyPulseApp:
         )
 
         row_width = self.page.window.width - 200 - 60 - 48
+        self.excluded_chats_list = ft.Column(
+            [ft.Text("'채팅방 목록 불러오기'를 누르면 선택할 수 있습니다.",
+                     size=12, color=ft.Colors.GREY_500)],
+            spacing=2,
+            scroll=ft.ScrollMode.AUTO,
+        )
         return ft.Column(
             [
                 ft.Text("Teams 수집·보고 설정", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
@@ -871,6 +878,24 @@ class WeeklyPulseApp:
                 ft.Row([ft.Text("수집할 채팅 유형", size=13, weight=ft.FontWeight.BOLD)] + checks, spacing=16),
                 check_field("work_only", "업무 관련 메시지만 보고서에 요약 (인사·잡담·비속어 제외, LLM 선별)"),
                 self.teams_scope_dropdown,
+                ft.Row(
+                    [
+                        ft.Text("수집 제외할 채팅방", size=13, weight=ft.FontWeight.BOLD),
+                        ft.Button(
+                            "채팅방 목록 불러오기",
+                            icon=ft.Icons.REFRESH,
+                            on_click=self._load_chat_exclusions,
+                        ),
+                    ],
+                    spacing=12,
+                ),
+                ft.Container(
+                    content=self.excluded_chats_list,
+                    border=ft.border.all(1, ft.Colors.GREY_300),
+                    border_radius=8,
+                    padding=12,
+                    height=220,
+                ),
             ],
             spacing=10,
             width=row_width,
@@ -904,6 +929,56 @@ class WeeklyPulseApp:
                 json.dump(self.teams_settings, f, indent=2, ensure_ascii=False)
         except Exception as ex:
             print(f"Warning: failed to save teams settings: {ex}")
+
+    def _load_chat_exclusions(self, e):
+        """Graph에서 채팅방 목록을 가져와 체크박스로 표시 (백그라운드 — 수 초 소요)"""
+        self.excluded_chats_list.controls = [
+            ft.Text("채팅방 목록 불러오는 중...", size=12, color=ft.Colors.GREY_500)
+        ]
+        self.page.update()
+
+        def _worker():
+            try:
+                from teams_collector import TeamsCollector
+                chats = TeamsCollector().list_chats()
+            except Exception as ex:
+                self.excluded_chats_list.controls = [
+                    ft.Text(f"목록 로딩 실패: {ex}", size=12, color=ft.Colors.RED_400)
+                ]
+                self.page.update()
+                return
+
+            excluded_ids = {
+                c.get("id") for c in self.teams_settings.get("excluded_chats", [])
+            }
+            type_label = {"oneOnOne": "1:1", "group": "그룹", "meeting": "회의"}
+            controls = []
+            for chat in chats:
+                label = f"[{type_label.get(chat['chat_type'], chat['chat_type'])}] {chat['title']}"
+                controls.append(
+                    ft.Checkbox(
+                        label=label,
+                        value=chat["id"] in excluded_ids,
+                        on_change=lambda ev, c=chat: self._teams_chat_excluded(c, ev.control.value),
+                    )
+                )
+            if not controls:
+                controls = [ft.Text("채팅방이 없거나 로그인이 필요합니다.", size=12)]
+            self.excluded_chats_list.controls = controls
+            self.page.update()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _teams_chat_excluded(self, chat, checked):
+        excluded = [c for c in self.teams_settings.get("excluded_chats", []) if isinstance(c, dict)]
+        if checked:
+            if all(c.get("id") != chat["id"] for c in excluded):
+                excluded.append({"id": chat["id"], "title": chat["title"]})
+        else:
+            excluded = [c for c in excluded if c.get("id") != chat["id"]]
+        self.teams_settings["excluded_chats"] = excluded
+        self._save_teams_settings()
+        self.show_snack("채팅방 제외 설정이 저장되었습니다 (수집·보고서 모두 적용)")
 
     def _render_watch_folder_list(self, watch_paths):
         """watch_folder_list_ref 내용을 현재 watch_paths 기준으로 다시 그림"""

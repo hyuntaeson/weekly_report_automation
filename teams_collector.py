@@ -109,6 +109,7 @@ DEFAULT_SETTINGS = {
     "chat_types": ["oneOnOne", "group", "meeting"],
     "report_scope": "mine",  # "mine"(내 메시지만) | "all"(주고받은 전체)
     "work_only": True,       # 업무 관련 메시지만 보고서 요약 대상으로 (LLM 선별)
+    "excluded_chats": [],    # [{"id": "...", "title": "..."}] — 수집/보고서에서 제외
 }
 
 
@@ -379,6 +380,7 @@ class TeamsCollector:
         if days is None:
             days = settings["days"]
         allowed_types = set(settings["chat_types"])
+        excluded_ids = {c.get("id") for c in settings.get("excluded_chats", [])}
 
         me_name = self._me_display_name(access_token)
         since = (
@@ -396,6 +398,13 @@ class TeamsCollector:
             if chat.get("chatType") not in allowed_types:
                 continue
             chat_id = chat.get("id")
+            if chat_id in excluded_ids:
+                continue
+            # 수집 기간 이전에 마지막 갱신된 채팅방은 메시지 조회 생략 —
+            # 전체 채팅방(수백 개)을 매번 순회하면 수백 번의 API 호출이 됨
+            last_updated = chat.get("lastUpdatedDateTime") or ""
+            if last_updated and last_updated < since:
+                continue
             try:
                 messages = _graph_get_all(
                     access_token,
@@ -412,12 +421,58 @@ class TeamsCollector:
                 created = msg.get("createdDateTime", "")
                 if created < since:
                     continue
-                activity = self._message_to_activity(msg, title, me_name)
+                activity = self._message_to_activity(msg, title, me_name, chat_id)
                 if activity:
                     activities.append(activity)
 
         activities.extend(self.collect_calendar_events(days))
         return activities
+
+    def list_chats(self):
+        """Settings 화면용: 채팅방 목록(id/표시명/유형) 반환. 토큰 없으면 빈 리스트."""
+        access_token = self._token or get_access_token(self.token_file)
+        if not access_token:
+            return []
+        self._token = access_token
+        me_name = self._me_display_name(access_token)
+        chats = _graph_get_all(access_token, "/me/chats", {"$top": 50})
+
+        # 토픽 없는 1:1만 멤버 조회가 필요 — 병렬로 한 번씩만 호출해 빠르게
+        need_members = [
+            c for c in chats if c.get("chatType") == "oneOnOne" and not c.get("topic")
+        ]
+        members_map = {}
+        if need_members:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _members(c):
+                try:
+                    others = [
+                        m for m in self._chat_members(c["id"]) if m != me_name
+                    ]
+                    return c["id"], others
+                except Exception:
+                    return c["id"], []
+
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                for cid, others in ex.map(_members, need_members):
+                    members_map[cid] = others
+
+        out = []
+        for chat in chats:
+            title = chat.get("topic")
+            if not title:
+                others = members_map.get(chat.get("id"), [])
+                title = "1:1 - " + ", ".join(others) if others else "1:1 - (상대방 정보 없음)"
+            out.append(
+                {
+                    "id": chat.get("id"),
+                    "title": title,
+                    "chat_type": chat.get("chatType"),
+                    "last_activity": chat.get("lastUpdatedDateTime"),
+                }
+            )
+        return out
 
     def collect_calendar_events(self, days=7):
         """Graph /me/calendarview로 최근 N일 + 내일까지의 일정을 수집.
@@ -496,7 +551,7 @@ class TeamsCollector:
             )
         return activities
 
-    def _message_to_activity(self, msg, chat_title, me_name=None):
+    def _message_to_activity(self, msg, chat_title, me_name=None, chat_id=None):
         """Graph message 객체를 activities 테이블 포맷으로 변환"""
         sender = ((msg.get("from") or {}).get("user") or {}).get("displayName") or "Unknown"
         body_html = (msg.get("body") or {}).get("content") or ""
@@ -514,6 +569,7 @@ class TeamsCollector:
             "details": json.dumps(
                 {
                     "chat": chat_title,
+                    "chat_id": chat_id,
                     "sender": sender,
                     "text": text[:300],
                     "message_type": msg.get("messageType"),
