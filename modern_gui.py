@@ -825,6 +825,13 @@ class WeeklyPulseApp:
                 on_change=lambda e: self._teams_setting_changed(key, e.control.value),
             )
 
+        def check_field(key, label):
+            return ft.Checkbox(
+                label=label,
+                value=bool(s.get(key)),
+                on_change=lambda e: self._teams_setting_changed(key, e.control.value),
+            )
+
         self._teams_chat_checks = {}
         type_labels = {"oneOnOne": "1:1 채팅", "group": "그룹 채팅", "meeting": "회의 채팅"}
         checks = []
@@ -853,19 +860,16 @@ class WeeklyPulseApp:
             [
                 ft.Text("Teams 수집·보고 설정", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
                 ft.Text(
-                    "변경 사항은 다음 수집/보고서 생성부터 자동 적용됩니다. 0 = 제한 없음.",
+                    "변경 사항은 다음 수집/보고서 생성부터 자동 적용됩니다.",
                     size=12, color=ft.Colors.GREY_600,
                 ),
                 ft.Row(
-                    [
-                        num_field("days", "수집 기간(일)", "기본 7"),
-                        num_field("chat_limit", "채팅방 상한", "0 = 전체"),
-                        num_field("messages_per_chat", "방당 메시지 상한", "0 = 전체"),
-                    ],
+                    [num_field("days", "수집 기간(일)", "기본 7")],
                     spacing=16,
                     wrap=True,
                 ),
                 ft.Row([ft.Text("수집할 채팅 유형", size=13, weight=ft.FontWeight.BOLD)] + checks, spacing=16),
+                check_field("work_only", "업무 관련 메시지만 보고서에 요약 (인사·잡담·비속어 제외, LLM 선별)"),
                 self.teams_scope_dropdown,
             ],
             spacing=10,
@@ -874,7 +878,7 @@ class WeeklyPulseApp:
 
     def _teams_setting_changed(self, key, value):
         """Teams 숫자/범위 설정 변경 → settings dict 갱신 + 저장"""
-        if key in ("days", "chat_limit", "messages_per_chat"):
+        if key == "days":
             try:
                 value = int(value)
             except (TypeError, ValueError):

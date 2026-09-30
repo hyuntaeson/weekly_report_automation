@@ -442,9 +442,12 @@ class ReportGenerator:
         # 보고서 범위는 config/teams_settings.json의 report_scope가 결정
         try:
             from teams_collector import load_teams_settings
-            scope = load_teams_settings().get("report_scope", "mine")
+            settings = load_teams_settings()
+            scope = settings.get("report_scope", "mine")
+            work_only = bool(settings.get("work_only", True))
         except Exception:
             scope = "mine"
+            work_only = False
 
         token_file = self.base_dir / "config" / "teams_graph_token.json"
         me_name = None
@@ -490,6 +493,15 @@ class ReportGenerator:
                 "received": received_count, "scope": scope, "summary": "",
             }
 
+        # 업무 관련 메시지만 선별 — 인사·잡담·이모티콘·비속어 제외
+        if work_only:
+            texts = self._filter_work_messages(texts)
+            if not texts:
+                return {
+                    "count": 0, "sent": sent_count,
+                    "received": received_count, "scope": scope, "summary": "",
+                }
+
         try:
             from llm_summarizer import LLMSummarizer
             summary = LLMSummarizer().summarize(
@@ -503,6 +515,39 @@ class ReportGenerator:
             "received": received_count, "scope": scope,
             "summary": summary or "",
         }
+
+    def _filter_work_messages(self, texts):
+        """LLM으로 업무 관련 메시지만 선별.
+
+        요청·지시·진행 상황·이슈·결정·질의응답 등 업무와 관련된 메시지의
+        번호만 돌려받는다. 인사·잡담·이모티콘·비속어·업무 무관 내용은 제외.
+        LLM 실패 시에는 안전하게 원본 리스트를 그대로 반환."""
+        if not texts:
+            return texts
+        numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(texts))
+        prompt = (
+            "다음은 Teams 채팅 메시지 목록이다. "
+            "업무와 관련된 메시지(요청·지시·진행 상황 보고·이슈·결정·"
+            "질의응답·문서/파일 관련 등)의 번호만 골라 콤마로 구분해 출력해라. "
+            "인사·잡담·이모티콘·비속어·업무와 무관한 내용은 제외한다. "
+            "업무 관련이 없으면 'NONE'만 출력. 번호만 출력하고 설명은 쓰지 마라."
+        )
+        try:
+            from llm_summarizer import LLMSummarizer
+            result = LLMSummarizer().complete(prompt, numbered, max_tokens=500)
+            if not result or "NONE" in result.upper():
+                return []
+            picked = []
+            for token in re.split(r"[^0-9]+", result):
+                if not token:
+                    continue
+                idx = int(token) - 1
+                if 0 <= idx < len(texts):
+                    picked.append(texts[idx])
+            return picked if picked else texts
+        except Exception as e:
+            print(f"Warning: work-message filtering failed: {e}")
+            return texts
 
     def _cluster_topics(self, activities):
         """임베딩 클러스터링으로 주간 활동을 주제 단위로 묶는다.

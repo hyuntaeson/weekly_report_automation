@@ -75,8 +75,11 @@ def _graph_get(access_token, path, params=None, max_retries=3):
     raise last_err
 
 
-def _graph_get_all(access_token, path, params=None, limit=0):
-    """@odata.nextLink를 따라가며 전체 수집. limit=0이면 제한 없음."""
+def _graph_get_all(access_token, path, params=None, limit=0, stop_before=None):
+    """@odata.nextLink를 따라가며 전체 수집. limit=0이면 제한 없음.
+    stop_before에 최신순 정렬 기준 '이보다 오래되면 그만' ISO 시각을 주면,
+    페이지의 마지막 항목이 그 시각 이전일 때 페이징을 중단한다
+    (수년치 이력 채팅방에서 불필요한 페이지 조회 방지)."""
     items = []
     url = path
     first = True
@@ -86,10 +89,15 @@ def _graph_get_all(access_token, path, params=None, limit=0):
             first = False
         else:
             data = _graph_get(access_token, url)  # nextLink는 전체 URL
-        items.extend(data.get("value", []))
+        page = data.get("value", [])
+        items.extend(page)
         url = data.get("@odata.nextLink")
         if limit and len(items) >= limit:
             return items[:limit]
+        if url and stop_before and page:
+            newest_key = page[-1].get("createdDateTime") or ""
+            if newest_key and newest_key < stop_before:
+                break
     return items
 
 
@@ -98,10 +106,9 @@ def _graph_get_all(access_token, path, params=None, limit=0):
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "config", "teams_settings.json")
 DEFAULT_SETTINGS = {
     "days": 7,
-    "chat_limit": 50,        # 상위 채팅방 수. 0 = 제한 없음(페이징)
-    "messages_per_chat": 50, # 채팅방당 최신 메시지 수. 0 = 제한 없음
     "chat_types": ["oneOnOne", "group", "meeting"],
     "report_scope": "mine",  # "mine"(내 메시지만) | "all"(주고받은 전체)
+    "work_only": True,       # 업무 관련 메시지만 보고서 요약 대상으로 (LLM 선별)
 }
 
 
@@ -360,9 +367,9 @@ class TeamsCollector:
 
     def collect_all_teams_activity(self, days=None):
         """본인 Teams 채팅방의 최근 메시지 수집. 토큰 없으면 빈 리스트.
-        수집 범위(기간·채팅 상한·메시지 상한·채팅 유형)는
-        config/teams_settings.json 설정을 따르며 없으면 기본값 사용.
-        days 인자를 주면 설정보다 우선."""
+        수집 범위(기간·채팅 유형)는 config/teams_settings.json을 따르며
+        없으면 기본값 사용. 채팅방·메시지는 상한 없이 nextLink 페이징으로
+        전량 수집한다. days 인자를 주면 설정보다 우선."""
         access_token = self._token or get_access_token(self.token_file)
         if not access_token:
             return []
@@ -371,8 +378,6 @@ class TeamsCollector:
         settings = load_teams_settings()
         if days is None:
             days = settings["days"]
-        chat_limit = int(settings["chat_limit"])
-        msg_limit = int(settings["messages_per_chat"])
         allowed_types = set(settings["chat_types"])
 
         me_name = self._me_display_name(access_token)
@@ -382,14 +387,7 @@ class TeamsCollector:
 
         activities = []
         try:
-            if chat_limit <= 0 or chat_limit > 50:
-                chats = _graph_get_all(
-                    access_token, "/me/chats", {"$top": 50}, limit=chat_limit
-                )
-            else:
-                chats = _graph_get(
-                    access_token, "/me/chats", {"$top": chat_limit}
-                ).get("value", [])
+            chats = _graph_get_all(access_token, "/me/chats", {"$top": 50})
         except Exception as e:
             print(f"Error listing Teams chats: {e}")
             return []
@@ -399,19 +397,12 @@ class TeamsCollector:
                 continue
             chat_id = chat.get("id")
             try:
-                if msg_limit <= 0 or msg_limit > 50:
-                    messages = _graph_get_all(
-                        access_token,
-                        f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
-                        {"$top": 50},
-                        limit=msg_limit,
-                    )
-                else:
-                    messages = _graph_get(
-                        access_token,
-                        f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
-                        {"$top": msg_limit},
-                    ).get("value", [])
+                messages = _graph_get_all(
+                    access_token,
+                    f"/me/chats/{urllib.parse.quote(chat_id, safe='')}/messages",
+                    {"$top": 50},
+                    stop_before=since,
+                )
             except Exception as e:
                 print(f"Error reading messages for chat {chat_id}: {e}")
                 continue

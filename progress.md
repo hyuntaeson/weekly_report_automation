@@ -125,6 +125,13 @@
 - **발표 모드**: 우하단 컨트롤러(◀ ▶·페이지 표시·발표 모드·전체화면), 키보드 ←/→/PgUp/PgDn 이동, F=전체화면, 발표 모드=한 페이지씩 + 자동 전체화면, 인쇄 시 전체 출력
 - **GUI 재구성** (`2ba72af`): 추적 자동 시작(Start Tracking 버튼 폐지 → "Tracking Active" 배지), 사이드바를 Dashboard+Settings로 축소(미구현 Tracked Apps/Reports 제거), Active Work Sessions에 OneNote 추가, Collect 수동 버튼 4개 제거(자동 수집이라 불필요), 하단 보고서 생성 패널·미리보기 버튼 제거 → Weekly Summary 하단에 전폭 Generate Weekly Report 버튼 (스크롤 없이 노출)
 
+### 17. Teams 수집/보고 설정 사용자화 (2026-09-30)
+- **`config/teams_settings.json`** + Settings 화면 "Teams 수집·보고 설정" 섹션: 수집 기간(일), 채팅 유형(1:1/그룹/회의), 보고서 범위(내 메시지/전체), 업무 관련만 요약(work_only)
+- **채팅/메시지 상한 제거**: `@odata.nextLink` 전체 페이징으로 전량 수집 — 기존 상위 50방×50건 제한이 오래된 1:1 대화 누락 원인이었음. `stop_before`로 기간 이전 페이지는 조기 중단해 비용 방지
+- **보고서에 보낸/받은 메시지 구분 표시**: "내가 보낸 메시지 n건 … (받은 메시지 m건)" / scope=all이면 주고받은 전체 요약
+- **업무 관련 선별(work_only, 기본 ON)**: 요약 전 LLM이 업무 관련 메시지만 선별 — 인사·잡담·이모티콘 제외. 실패 시 전체 유지 폴백
+- GUI 성능: 시작 시간 ~10s→~2.2s (lazy import + 프로세스 단일 스캔 + pyenv shim 우회 배치)
+
 ### 알려진 잔여 이슈 (이번 세션에서 새로 확인)
 - **`.docx`/`.pptx` DRM fallback 미작동**: `python-docx`/`python-pptx`는 비-zip 파일에 `PackageNotFoundError`(= `docx.opc.exceptions`/`pptx.exc`)를 던지는데, 코드가 `zipfile.BadZipFile`만 잡아서 `except Exception → None` 경로로 빠짐. 결정 24의 fallback이 Excel에서만 실제 동작 중 — 수정 필요 (OLE2 매직바이트 직접 확인 방식 권장)
 - **DRM 내용 추출 (2026-09-29 부분 해소)**: Windows + Office 설치 환경에서는 COM으로 실제 내용 추출 동작 확인 (decisions #37). macOS는 수정 이벤트만 기록 — 고도화 후보로 사내 DevX `DocumentLoader.yaml` 워크플로우(파일 업로드 → content 반환 API가 있다면) 검증 여지 남김
