@@ -109,9 +109,9 @@ class WeeklyPulseApp:
         self.page.title = "WeeklyPulse"
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.window.width = 1400
-        self.page.window.height = 900
+        self.page.window.height = 780
         self.page.window.min_width = 1200
-        self.page.window.min_height = 750
+        self.page.window.min_height = 650
         self.page.padding = 0
         self.page.bgcolor = ft.Colors.WHITE
 
