@@ -20,18 +20,19 @@
 
 ## 📊 현재 상태 요약
 
-**완료율**: 약 95%+ (수집 소스 8종 + AI 분석/영속화 + LangGraph 파이프라인 + macOS 이식 준비 완료, Slack 토큰 발급·자동 스케줄링·UI 최종 다듬기만 남음)
+**완료율**: 약 95%+ (수집 소스 11종 + AI 분석/영속화 + LangGraph 파이프라인 + GUI 완성, Slack 토큰 발급·자동 스케줄링만 남음)
 
-**성과** (2026-09-28 기준):
-- 파일 시스템(실시간 감시+내용 캡처), IDE, Outlook(COM/Graph), Claude Code, Confluence, 브라우저(Chrome), Teams(Graph 디바이스 로그인) — 전체 소스 정상 동작 확인
+**성과** (2026-09-30 기준):
+- 파일 시스템(실시간 감시+내용 캡처), IDE, Outlook(COM/Graph), Claude Code, Confluence, 브라우저(Chrome), Teams(채팅+일정), OneNote(섹션), **SharePoint/OneDrive(파일 수정)** — 전체 소스 정상 동작
 - 주간보고서 생성 완료 (Markdown + Word, 액션별 상세 + AI 요약 + 노이즈 필터링 + 민감 URL 제거)
-- **Teams 연동 완료** — Graph 위임권한(디바이스 코드 로그인)으로 채팅·일정 수집, 1:1 대화 상대방 실명 해석(14개 중 12개)
+- **Teams 사용자 설정** — 수집 기간·채팅 유형·제외 채팅방·보고서 범위(내 메시지/전체)·업무 관련만 요약을 Settings 화면에서 직접 선택
+- **GUI 완성** — 추적 자동 시작, 시작 ~10s→~2s (pyenv shim 우회 + lazy import + 프로세스 단일 스캔), Weekly Summary + Generate Report 단일 CTA
 - **AI 의미 분석 완료** — 임베딩 클러스터링으로 "주제별 작업" 섹션 생성, `activity_embeddings` 테이블로 벡터 영속화(재실행 22.6s→3.3s)
 - **LangGraph 파이프라인** — 보고서 생성을 노드/엣지로 구조화, 활동 없으면 분석 스킵
 - **LCEL 체인** — LLM 호출을 소스별 프롬프트 템플릿으로 표준화, 내장 재시도
 - **macOS 이식 준비** — win32 가드, Outlook Graph 폴백, pywin32 조건부 의존
-- **Git 버전관리 시작** — https://github.com/hyuntaeson/weekly_report_automation
-- **전체 기능 시나리오 32건 테스트** — Excel 결과 자동 생성 (`test_reports/`), PASS 31 / FAIL 0 / SKIP 1
+- **Git 버전관리** — https://github.com/hyuntaeson/weekly_report_automation
+- **시나리오 테스트 스위트** — Excel 결과 자동 생성 (`test_reports/`)
 - 사내 LiteLLM Proxy 연동 (요약 + 임베딩 모두, 캐싱 포함)
 
 **남은 핵심 작업**:
@@ -40,7 +41,6 @@
 - Slack Bot Token 발급 및 연동 마무리 (사내 승인 대기)
 - macOS 실기 검증 (코드 준비 완료, 맥에서 GUI 기동·Graph 로그인 확인 필요)
 - Word/PPT DRM 폴백 보완 — `PackageNotFoundError` 미처리 (xlsx만 정상, 보류 중)
-- UI 최종 다듬기 (Slack까지 다 붙은 뒤 한 번에 정리)
 
 ## 🎯 다음 할 일
 

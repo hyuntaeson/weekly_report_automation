@@ -17,6 +17,7 @@
 - 브라우저 (Chrome 방문 기록)
 - Teams (회의 + 채팅 메시지)
 - OneNote (노트북·섹션 수정 이력 — Graph 권한 제한으로 페이지 본문은 불가)
+- SharePoint/OneDrive (본인 드라이브 + 공유받은 파일의 수정 이력)
 
 ## ✅ 완료 기준
 
@@ -33,7 +34,10 @@
 - [x] AI 의미 분석: 임베딩 클러스터링으로 주간 활동을 주제 단위로 자동 분류 (주제별 작업 섹션)
 - [x] 임베딩 영속 저장: `activity_embeddings` 테이블로 벡터 누적 — 재실행 시 캐시 재사용
 - [x] 보고서 생성 LangGraph 파이프라인 (collect→filter→analyze→aggregate→output 노드화)
-- [x] 전체 기능 시나리오 테스트 32건 — Excel 결과 자동 생성 (`scenario_test.py`)
+- [x] 전체 기능 시나리오 테스트 — Excel 결과 자동 생성 (`scenario_test.py`)
+- [x] GUI 자동 추적 시작 + 시작 시간 최적화 (~10s→~2s)
+- [x] Teams 수집/보고 기준 사용자 설정 (기간·채팅유형·제외 채팅방·업무만 요약)
+- [x] SharePoint/OneDrive 파일 수정 이력 수집 (동일 Graph 토큰 재사용)
 - [x] macOS 이식 준비 — win32 가드, Outlook은 Graph 폴백으로 플랫폼 무관 수집
 - [ ] Slack Bot Token 발급 및 연동 마무리
 
@@ -54,11 +58,13 @@
 | Confluence 연동 | ✅ 완료 | REST API로 페이지 활동 + 본문 요약 수집 |
 | 브라우저 확장 | ✅ 완료 | Chrome MV3 확장 + 로컬 서버 |
 | 통합 수집 시스템 | ✅ 완료 | 주기적 자동 수집, 스레드 기반 |
-| Modern GUI | ✅ 완료 (스켈레톤) | Flet 기반 UI, 실제 프로세스 감지로 앱 활성 상태 실시간 반영 |
+| Modern GUI | ✅ 완료 | Flet 기반 UI — 추적 자동 시작, Weekly Summary + Generate Report 단일 CTA, 실시간 프로세스 감지 |
 | AI 의미 분석 | ✅ 완료 | 임베딩 클러스터링 → 보고서 "주제별 작업" 섹션 (흩어진 활동을 주제로 묶음) |
 | 임베딩 캐시 | ✅ 완료 | `activity_embeddings` 테이블, 2회차 보고서 생성 시 재계산 불필요 |
 | LangGraph 파이프라인 | ✅ 완료 | 보고서 생성을 노드/엣지 그래프로 — 활동 없으면 분석 스킵 분기 |
 | macOS 이식 | ✅ 코드 준비 | win32 가드, Outlook Graph 폴백 (맥에서 실기 검증 필요) |
+| Teams 사용자 설정 | ✅ 완료 | Settings 화면에서 수집 기간/채팅 유형/제외 채팅방/보고서 범위/업무만 요약 선택 |
+| SharePoint/OneDrive 수집 | ✅ 완료 | `/me/drive/recent` + `sharedWithMe`에서 기간 내 수정 파일 수집 |
 
 ### 데이터 소스
 
@@ -74,6 +80,7 @@
 | 브라우저 | ✅ 완료 (Chrome only) | MV3 확장 + 로컬 HTTP 서버 |
 | Teams | ✅ 완료 | 채팅+일정=Graph 위임권한(디바이스 로그인), 1:1 대화 상대방 실명 해석 |
 | OneNote | ✅ 완료 (제한적) | Graph 위임권한 — 노트북/섹션 수정 시각 수집. 페이지 제목·본문은 `Notes.Read.All` 미승인으로 불가 |
+| SharePoint/OneDrive | ✅ 완료 | Graph 위임권한 (Files.Read.All) — 최근 수정 파일 + 공유받은 파일 |
 
 ### 테스트 결과
 
@@ -94,6 +101,7 @@ weekly_report_automation/
 ├── confluence_collector.py       # Confluence 페이지 활동 수집 (AI 요약 포함)
 ├── teams_collector.py            # Teams 활동 수집 (Graph API, config 없으면 스텁)
 ├── onenote_collector.py          # OneNote 활동 수집 (Graph API — 섹션 수준)
+├── sharepoint_collector.py       # SharePoint/OneDrive 파일 수정 수집 (Graph API)
 ├── llm_summarizer.py             # 사내 LiteLLM Proxy 기반 텍스트 요약기 (LCEL 체인)
 ├── activity_clusterer.py         # 임베딩 의미 클러스터링 → 보고서 "주제별 작업"
 ├── report_pipeline.py            # 보고서 생성 LangGraph 파이프라인
@@ -119,6 +127,7 @@ weekly_report_automation/
 │   └── icons/ (16/48/128px)
 ├── config/
 │   ├── watch_config.json         # 감시 설정 파일 (감시 폴더 목록)
+│   ├── teams_settings.json       # Teams 수집/보고 설정 (Settings 화면에서 저장)
 │   ├── slack_config.json         # Slack 설정 파일 (gitignore 처리됨)
 │   ├── confluence_config.json    # Confluence 설정 파일 (토큰 포함, gitignore 처리됨)
 │   └── litellm_config.json       # 사내 LiteLLM Proxy 설정 (API 키 포함, gitignore 처리됨)
@@ -174,7 +183,7 @@ python test_all_completed.py
 - `action`: 동작 타입 (created, modified, deleted, moved, email_received, email_sent, meeting 등)
 - `file_path`: 파일 경로 또는 활동 설명
 - `file_type`: 파일 타입 (excel, powerpoint, text, email, calendar 등)
-- `source`: 데이터 소스 (filesystem, vscode, orca, outlook, slack, claude_code, confluence, browser)
+- `source`: 데이터 소스 (filesystem, vscode, orca, outlook, slack, claude_code, confluence, browser, teams, onenote, sharepoint)
 - `details`: 추가 정보 (JSON 형식)
 - `created_at`: 데이터베이스 기록 시간
 

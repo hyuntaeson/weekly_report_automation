@@ -130,7 +130,7 @@
 - API 연동은 가능하나 이번 스코프에서는 미착수
 - 구조만 확보해두고 추후 API 연동 가능
 
-### 14. 데이터 소스: 8개로 확정
+### 14. 데이터 소스: 8개로 확정 (→ 이후 Teams/OneNote/SharePoint 추가로 11개)
 
 **결정**: 파일 시스템, VSCode, Orca IDE, Outlook, Slack, Claude Code, Confluence, 브라우저(Chrome) 8개로 확정
 
@@ -138,6 +138,8 @@
 - Devin은 로컬 로그 없음으로 스텁만
 - Teams는 인증정보 미확보로 대기
 - 실사용 가능한 8개 소스에 집중
+
+**후속**: Teams(채팅+일정), OneNote(섹션), SharePoint/OneDrive(파일 수정)가 추가되어 현재 11개 소스. 전부 동일한 Graph 디바이스 토큰으로 동작
 
 ### 16. Flet 버전: 1.0.0 → 0.86.5 다운그레이드
 
@@ -335,6 +337,40 @@
 - 반면 Office COM은 `Workbooks.Open(ReadOnly)`만으로 자체 권한 복호화 → **원본 파일 무수정, 라벨 변경 없이** 내용 추출 (2026-09-29 실제 DRM 발주서 xlsx로 검증)
 - Windows+Office 설치 환경 한정 — macOS/Office 미설치 환경에서는 기존 폴백(수정 이벤트만 기록) 유지
 - 발견한 DRM 파일들은 Purview 라벨이 아닌 별도 문서보안 솔루션으로 보임 (`SensitivityLabel.GetLabel()` 빈 값)
+
+### 38. GUI: 추적 자동 시작 + 지연 import (기동 ~10s→~2s)
+
+**결정**: GUI 시작 시 추적이 자동으로 켜지고 Start/Stop 버튼을 폐지. 무거운 모듈(collectors·report_generator 등)은 실제 호출 시점에 lazy import, 프로세스 감지는 `process_iter`+창 열거 각 1회의 배치 스캔. `run_modern_gui.bat`은 pyenv shim을 우회해 실제 `pythonw.exe`를 직접 호출.
+
+**이유**:
+- 사용자가 "프로그램 시작 시 자동 실행이 효과적"이라고 명시 — 별도 Start 버튼은 불필요한 클릭
+- 측정 결과 기동 10초+ 중 대부분이 ①pyenv shim 버전 해석(~6.5s) ②langchain/watchdog 등 무거운 선행 import ③앱 12개 각각 전체 프로세스 스캔이었음
+- `pythonw`로 콘솔 없이 띄워 이중창(콘솔+GUI)도 제거
+
+### 39. Teams 수집/보고 기준: 사용자 설정 파일 + Settings UI
+
+**결정**: `config/teams_settings.json`에 수집 기간·채팅 유형(1:1/그룹/회의)·보고서 범위(mine/all)·업무 관련만 요약(work_only)·제외 채팅방(excluded_chats)을 저장하고, Settings 화면에서 직접 편집. 채팅방·메시지 수집 상한은 아예 제거하고 `nextLink` 전체 페이징으로 수집.
+
+**이유**:
+- 사용자가 "1:1 대화가 누락돼 보인다"고 지적 — 상위 50방×50건 하드캡이 원인이었고, 하드코딩된 기준 대신 사용자가 직접 조절할 수 있어야 한다고 요청
+- work_only는 수집이 아니라 **보고서 요약 단계**에서 LLM이 선별 — 원본 데이터는 보존하고 언제든 토글로 원복 가능
+- 제외 채팅방도 수집/보고서 양쪽에서 적용해 과거 데이터까지 즉시 반영
+
+### 40. 채팅 최신성 기준: `lastMessagePreview.createdDateTime` (lastUpdatedDateTime 아님)
+
+**결정**: 채팅 목록 요청에 `$expand=lastMessagePreview`를 붙이고, 최신성 판정·조기 페이징 중단(stop_before)은 마지막 메시지 시각(`lastMessagePreview.createdDateTime`) 기준. 폴백으로만 `lastUpdatedDateTime` 사용.
+
+**이유**:
+- `lastUpdatedDateTime`은 멤버/메타데이터 변경 시각이라 ①오래된 대화가 최근 방처럼 보이고 ②오늘 메시지가 온 오래된 방을 놓치는 양방향 오류 확인 (2026-09-30 실제 데이터로 검증)
+- 이 기준 적용으로 전체 채팅 903개→최근 22개, 목록 로딩 27s→0.9s
+
+### 41. SharePoint/OneDrive 수집: 동일 Graph 토큰 재사용
+
+**결정**: `sharepoint_collector.py`가 Teams 디바이스 토큰의 `Files.Read.All`을 재사용해 `/me/drive/recent` + `/me/drive/sharedWithMe`에서 기간 내 수정 파일을 수집. 파일 본문은 읽지 않고 수정 메타데이터만.
+
+**이유**:
+- 토큰에 `Files.Read.All`이 이미 포함돼 추가 인증이 전혀 필요 없음 (공유 링크 `u!`+base64url 디코딩으로 임의 파일 해석도 확인)
+- 파일 내용은 이미 로컬 파일 감시+COM 폴백 경로가 담당 — 클라우드 쪽은 "어떤 공유 문서를 언제 만졌나" 메타데이터만으로 충분
 
 ## ❌ 폐기된 결정
 
