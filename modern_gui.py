@@ -51,6 +51,8 @@ class WeeklyPulseApp:
         # 클래식 Outlook(outlook.exe) + 신형 Outlook(olk.exe)
         "Outlook": ["outlook.exe", "olk.exe", "Microsoft Outlook"],
         "Word": ["winword.exe", "Microsoft Word"],
+        # 데스크톱 OneNote(ONENOTE.EXE) + Store/UWP(OneNoteIm.exe)
+        "OneNote": ["onenote.exe", "onenoteim.exe", "Microsoft OneNote"],
     }
 
     @staticmethod
@@ -109,7 +111,7 @@ class WeeklyPulseApp:
         self.page.window.width = 1400
         self.page.window.height = 900
         self.page.window.min_width = 1200
-        self.page.window.min_height = 800
+        self.page.window.min_height = 750
         self.page.padding = 0
         self.page.bgcolor = ft.Colors.WHITE
 
@@ -133,6 +135,7 @@ class WeeklyPulseApp:
             "Teams": {"icon": ft.Icons.GROUPS, "last_active": "10 min ago"},
             "Outlook": {"icon": ft.Icons.MAIL, "last_active": "10 min ago"},
             "Word": {"icon": ft.Icons.DESCRIPTION, "last_active": "10 min ago"},
+            "OneNote": {"icon": ft.Icons.NOTE, "last_active": "10 min ago"},
         }
         for app_name, app_data in self.tracked_apps.items():
             app_data["active"] = self.is_app_running(
@@ -308,7 +311,6 @@ class WeeklyPulseApp:
             self.create_header(),
             self.create_active_sessions(),
             self.create_control_panel(),
-            self.create_action_buttons(),
         ]
 
     def switch_view(self, view_name):
@@ -362,8 +364,6 @@ class WeeklyPulseApp:
                         content=ft.Column(
                             [
                                 self.create_nav_item("Dashboard", ft.Icons.DASHBOARD, True),
-                                self.create_nav_item("Tracked Apps", ft.Icons.APPS, False),
-                                self.create_nav_item("Reports", ft.Icons.ASSIGNMENT, False),
                                 self.create_nav_item("Settings", ft.Icons.SETTINGS, False),
                             ],
                             spacing=8,
@@ -436,7 +436,7 @@ class WeeklyPulseApp:
                 spacing=4,
                 alignment=ft.MainAxisAlignment.START,
             ),
-            padding=24,
+            padding=ft.Padding(24, 16, 24, 8),
         )
 
     def create_active_sessions(self):
@@ -467,15 +467,15 @@ class WeeklyPulseApp:
                         weight=ft.FontWeight.BOLD,
                         color=ft.Colors.BLACK,
                     ),
-                    ft.Container(height=16),  # Spacer
+                    ft.Container(height=10),  # Spacer
                     # App cards rows
                     ft.Column(
                         rows,
-                        spacing=16,
+                        spacing=12,
                     ),
                 ],
             ),
-            padding=24,
+            padding=ft.Padding(24, 8, 24, 8),
             expand=True,
         )
 
@@ -483,7 +483,7 @@ class WeeklyPulseApp:
         """Create individual app card with proper sizing"""
         icon_ref = ft.Icon(
             app_data["icon"],
-            size=36,
+            size=28,
             color=ft.Colors.BLUE if app_data["active"] else ft.Colors.GREY_400,
         )
         dot_ref = ft.CircleAvatar(
@@ -500,8 +500,8 @@ class WeeklyPulseApp:
                     # App icon with active indicator
                     ft.Stack(
                         [icon_ref, dot_ref],
-                        width=36,
-                        height=36,
+                        width=28,
+                        height=28,
                     ),
                     # App name
                     ft.Text(
@@ -517,11 +517,11 @@ class WeeklyPulseApp:
                         color=ft.Colors.GREY_600,
                     ),
                 ],
-                spacing=8,
+                spacing=5,
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=16,
+            padding=10,
             border_radius=12,
             bgcolor=ft.Colors.WHITE,
             border=ft.BorderSide(1, ft.Colors.GREY_200),
@@ -534,117 +534,40 @@ class WeeklyPulseApp:
             width=160,
         )
 
-    def create_action_buttons(self):
-        """Create action buttons section with proper sizing"""
-        return ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text(
-                        "주간 보고서 생성",
-                        size=18,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.BLACK,
-                    ),
-                    ft.Container(height=16),  # Spacer
-                    ft.Row(
-                        [
-                            # Generate Report button
-                            ft.Button(
-                                "주간 보고서 생성",
-                                icon=ft.Icons.ASSIGNMENT,
-                                bgcolor=ft.Colors.BLUE,
-                                color=ft.Colors.WHITE,
-                                style=ft.ButtonStyle(
-                                    padding=ft.Padding.all(20),
-                                    shape=ft.RoundedRectangleBorder(radius=10),
-                                ),
-                                on_click=self.generate_report,
-                                width=200,
-                                height=50,
-                            ),
-                            # Preview Draft button
-                            ft.Button(
-                                "미리보기",
-                                icon=ft.Icons.VISIBILITY,
-                                bgcolor=ft.Colors.GREEN,
-                                color=ft.Colors.WHITE,
-                                style=ft.ButtonStyle(
-                                    padding=ft.Padding.all(20),
-                                    shape=ft.RoundedRectangleBorder(radius=10),
-                                ),
-                                on_click=self.preview_draft,
-                                width=200,
-                                height=50,
-                            ),
-                        ],
-                        spacing=20,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    ),
-                ],
-                spacing=8,
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=24,
-            bgcolor=ft.Colors.GREY_100,
-            border_radius=12,
-        )
-
     def create_control_panel(self):
         """Horizontal control panel: weekly summary stats + tracking/collect
         buttons. Skeleton layout for now (see build_ui note) — was a
         vertical right sidebar, moved here to dodge a Flet layout bug.
         """
-        tracking_button = ft.Button(
-            content=ft.Row(
-                [
-                    ft.Icon(ft.Icons.PLAY_ARROW if not self.is_running else ft.Icons.STOP, size=18),
-                    ft.Text(
-                        "Start Tracking" if not self.is_running else "Stop Tracking",
-                        size=13,
-                    ),
-                ],
-                spacing=8,
-            ),
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE if not self.is_running else ft.Colors.RED,
-                color=ft.Colors.WHITE,
-                padding=12,
-                shape=ft.RoundedRectangleBorder(radius=8),
-            ),
-            on_click=self.toggle_tracking,
-            width=170,
-        )
-
-        # Store reference
-        self.tracking_button_ref = tracking_button
-
-        def collect_button(text, icon, bgcolor, on_click):
-            return ft.Button(
-                content=ft.Row(
-                    [ft.Icon(icon, size=18), ft.Text(text, size=13)],
-                    spacing=8,
-                ),
-                style=ft.ButtonStyle(
-                    bgcolor=bgcolor,
-                    color=ft.Colors.WHITE,
-                    padding=12,
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                ),
-                on_click=on_click,
-                width=170,
-            )
-
         return ft.Container(
             content=ft.Column(
                 [
-                    ft.Text(
-                        "Weekly Summary",
-                        size=18,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.BLACK,
+                    ft.Row(
+                        [
+                            ft.Text(
+                                "Weekly Summary",
+                                size=18,
+                                weight=ft.FontWeight.BOLD,
+                                color=ft.Colors.BLACK,
+                            ),
+                            ft.Container(expand=True),
+                            # 추적 상태 표시 — 프로그램 시작 시 자동으로 켜짐
+                            ft.Container(
+                                content=ft.Row(
+                                    [
+                                        ft.CircleAvatar(bgcolor=ft.Colors.GREEN, radius=5),
+                                        ft.Text("Tracking Active", size=12, color=ft.Colors.GREY_700, weight=ft.FontWeight.BOLD),
+                                    ],
+                                    spacing=8,
+                                ),
+                                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                                bgcolor=ft.Colors.GREEN_50,
+                                border_radius=999,
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Container(height=12),
+                    ft.Container(height=10),
                     ft.Row(
                         [
                             self.create_stat_card("hours", "Total Hours Tracked", ft.Icons.SCHEDULE),
@@ -653,22 +576,35 @@ class WeeklyPulseApp:
                         ],
                         spacing=12,
                     ),
-                    ft.Container(height=12),
+                    ft.Container(height=10),
+                    # 주 액션: 보고서 생성 — 패널 폭 전체의 다크 버튼
                     ft.Row(
                         [
-                            tracking_button,
-                            collect_button("Collect IDE", ft.Icons.COMPUTER, ft.Colors.PURPLE, self.collect_ide),
-                            collect_button("Collect Outlook", ft.Icons.EMAIL, ft.Colors.ORANGE, self.collect_outlook),
-                            collect_button("Collect Slack", ft.Icons.CHAT, ft.Colors.PURPLE, self.collect_slack),
-                            collect_button("Confluence", ft.Icons.ARTICLE, ft.Colors.INDIGO, self.collect_confluence),
+                            ft.Button(
+                                content=ft.Row(
+                                    [
+                                        ft.Icon(ft.Icons.ASSIGNMENT, size=22),
+                                        ft.Text("Generate Weekly Report", size=15, weight=ft.FontWeight.BOLD),
+                                    ],
+                                    spacing=10,
+                                    alignment=ft.MainAxisAlignment.CENTER,
+                                ),
+                                style=ft.ButtonStyle(
+                                    bgcolor=ft.Colors.BLUE_GREY_900,
+                                    color=ft.Colors.WHITE,
+                                    padding=ft.Padding.symmetric(vertical=14),
+                                    shape=ft.RoundedRectangleBorder(radius=10),
+                                ),
+                                on_click=self.generate_report,
+                                expand=True,
+                                height=52,
+                            ),
                         ],
-                        wrap=True,
-                        spacing=8,
                     ),
                 ],
                 spacing=8,
             ),
-            padding=24,
+            padding=ft.Padding(24, 14, 24, 14),
             bgcolor=ft.Colors.GREY_50,
             border_radius=12,
         )
@@ -778,9 +714,9 @@ class WeeklyPulseApp:
         )
 
         note = ft.Text(
-            "⚠ Tracking이 실행 중일 때 추가/삭제한 폴더는 Stop → Start Tracking으로 재시작해야 반영됩니다."
+            "추적은 프로그램 시작 시 자동으로 켜집니다 — 폴더 추가/삭제는 프로그램 재시작 시 반영됩니다."
             if self.is_running
-            else "폴더를 추가하면 다음 Start Tracking부터 감시 대상에 포함됩니다.",
+            else "폴더를 추가하면 프로그램 재시작 후 추적 대상에 포함됩니다.",
             size=12,
             color=ft.Colors.ORANGE if self.is_running else ft.Colors.GREY_600,
         )
@@ -1157,6 +1093,8 @@ def main(page: ft.Page):
     page.add(app.build_ui())
     page.update()
     app.start_status_refresh_loop()
+    # 추적은 프로그램 시작과 동시에 자동으로 켬 — 별도 Start 버튼 없음
+    app.start_tracking()
 
 
 if __name__ == "__main__":
