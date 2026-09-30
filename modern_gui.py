@@ -22,14 +22,10 @@ except ImportError:
     _WIN32_AVAILABLE = False
 from collections import Counter
 from datetime import datetime, timedelta
-from file_watcher import FileWatcher, FileActivityHandler
-from ide_collector import IDECollector, RecentFileCollector
-from outlook_collector import OutlookCollector, OutlookLogCollector
-from slack_collector import SlackCollector
-from confluence_collector import ConfluenceCollector
-from report_generator import ReportGenerator
-from database import ActivityDatabase
-from browser_activity_server import BrowserActivityServer
+
+# 수집기·보고서 생성기 등 무거운 모듈은 실제 호출 시점에 lazy import —
+# langchain/langgraph/docx/watchdog 로딩이 창이 뜨기 전 수 초를 차지하므로
+# 최초 렌더링 경로에서는 빼둔다.
 
 
 class WeeklyPulseApp:
@@ -104,6 +100,51 @@ class WeeklyPulseApp:
 
         return found["visible"]
 
+    def _scan_running_apps(self):
+        """tracked_apps 전체의 실행 여부를 프로세스·창 열거 각 1회씩으로 판정.
+
+        앱마다 is_app_running()을 따로 부르면 process_iter + EnumWindows가
+        N번 반복돼 시작이 수 초 느려진다 — 여기서는 한 번만 스캔한다.
+        """
+        name_to_pids = {}
+        all_names = {n.lower() for names in self.PROCESS_NAMES.values() for n in names}
+        try:
+            for proc in psutil.process_iter(["pid", "name"]):
+                name = (proc.info.get("name") or "").lower()
+                if name in all_names:
+                    name_to_pids.setdefault(name, []).append(proc.info["pid"])
+        except Exception:
+            name_to_pids = {}
+
+        # 보이는 창을 가진 프로세스 PID만 수집 (Windows). 다른 OS는 프로세스 존재로 판정
+        visible_pids = None
+        if _WIN32_AVAILABLE and name_to_pids:
+            visible_pids = set()
+
+            def _cb(hwnd, _):
+                if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                        visible_pids.add(pid)
+                    except Exception:
+                        pass
+
+            try:
+                win32gui.EnumWindows(_cb, None)
+            except Exception:
+                visible_pids = None  # 창 열거 실패 → 프로세스 존재로 폴백
+
+        running = set()
+        for app_name, names in self.PROCESS_NAMES.items():
+            pids = {p for n in names for p in name_to_pids.get(n.lower(), [])}
+            if visible_pids is None:
+                alive = bool(pids)
+            else:
+                alive = bool(pids & visible_pids)
+            if alive:
+                running.add(app_name)
+        return running
+
     def __init__(self, page: ft.Page):
         self.page = page
         self.page.title = "WeeklyPulse"
@@ -137,10 +178,9 @@ class WeeklyPulseApp:
             "Word": {"icon": ft.Icons.DESCRIPTION, "last_active": "10 min ago"},
             "OneNote": {"icon": ft.Icons.NOTE, "last_active": "10 min ago"},
         }
+        running = self._scan_running_apps()
         for app_name, app_data in self.tracked_apps.items():
-            app_data["active"] = self.is_app_running(
-                self.PROCESS_NAMES.get(app_name, [])
-            )
+            app_data["active"] = app_name in running
 
         # Statistics - 실제 수집 데이터 기반으로 compute_weekly_stats()가 채움
         self.total_hours = "0 hrs"
@@ -176,6 +216,8 @@ class WeeklyPulseApp:
         hours = 0
         most_source = None
         try:
+            from database import ActivityDatabase
+
             today = datetime.now()
             week_start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
             with ActivityDatabase() as db:
@@ -248,8 +290,9 @@ class WeeklyPulseApp:
     def refresh_app_statuses(self):
         """실제 프로세스 상태를 다시 확인하고 변경된 카드만 갱신"""
         changed = False
+        running = self._scan_running_apps()
         for app_name, app_data in self.tracked_apps.items():
-            new_active = self.is_app_running(self.PROCESS_NAMES.get(app_name, []))
+            new_active = app_name in running
             if new_active == app_data.get("active"):
                 continue
             app_data["active"] = new_active
@@ -859,6 +902,9 @@ class WeeklyPulseApp:
     def start_tracking(self):
         """Start file tracking"""
         try:
+            from file_watcher import FileWatcher
+            from browser_activity_server import BrowserActivityServer
+
             # Load config
             config_file = "config/watch_config.json"
             if os.path.exists(config_file):
@@ -930,6 +976,8 @@ class WeeklyPulseApp:
     def collect_ide(self, e):
         """Collect IDE activity"""
         try:
+            from ide_collector import IDECollector
+
             self.show_snack("Collecting IDE activity...")
 
             collector = IDECollector("data/activities.db")
@@ -950,6 +998,9 @@ class WeeklyPulseApp:
         API is unavailable.
         """
         try:
+            from outlook_collector import OutlookCollector, OutlookLogCollector
+            from database import ActivityDatabase
+
             self.show_snack("Collecting Outlook activity...")
 
             api_collector = OutlookCollector("data/activities.db")
@@ -977,6 +1028,8 @@ class WeeklyPulseApp:
     def collect_slack(self, e):
         """Collect Slack activity"""
         try:
+            from slack_collector import SlackCollector
+
             self.show_snack("Collecting Slack activity...")
 
             # Load Slack config
@@ -1012,6 +1065,8 @@ class WeeklyPulseApp:
     def collect_confluence(self, e):
         """Collect Confluence activity"""
         try:
+            from confluence_collector import ConfluenceCollector
+
             self.show_snack("Collecting Confluence activity...")
 
             config_file = "config/confluence_config.json"
@@ -1047,6 +1102,8 @@ class WeeklyPulseApp:
     def generate_report(self, e):
         """Generate weekly report"""
         try:
+            from report_generator import ReportGenerator
+
             self.show_snack("Generating weekly report...")
             generator = ReportGenerator()
             result = generator.generate_and_save_weekly_report()
@@ -1065,6 +1122,8 @@ class WeeklyPulseApp:
     def preview_draft(self, e):
         """Preview draft report"""
         try:
+            from report_generator import ReportGenerator
+
             self.show_snack("Previewing draft report...")
             generator = ReportGenerator()
             weekly_data = generator.collect_weekly_data()
@@ -1093,8 +1152,10 @@ def main(page: ft.Page):
     page.add(app.build_ui())
     page.update()
     app.start_status_refresh_loop()
-    # 추적은 프로그램 시작과 동시에 자동으로 켬 — 별도 Start 버튼 없음
-    app.start_tracking()
+    # 추적은 프로그램 시작과 동시에 자동으로 켬 — 별도 Start 버튼 없음.
+    # FileWatcher import+시작에 수 백ms 걸리므로 UI 표시를 지연시키지 않도록
+    # 백그라운드 스레드로 돌림
+    threading.Thread(target=app.start_tracking, daemon=True).start()
 
 
 if __name__ == "__main__":
