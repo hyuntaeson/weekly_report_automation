@@ -75,11 +75,15 @@ def _graph_get(access_token, path, params=None, max_retries=3):
     raise last_err
 
 
-def _graph_get_all(access_token, path, params=None, limit=0, stop_before=None):
+def _graph_get_all(
+    access_token, path, params=None, limit=0, stop_before=None,
+    recency_key="createdDateTime",
+):
     """@odata.nextLink를 따라가며 전체 수집. limit=0이면 제한 없음.
     stop_before에 최신순 정렬 기준 '이보다 오래되면 그만' ISO 시각을 주면,
     페이지의 마지막 항목이 그 시각 이전일 때 페이징을 중단한다
-    (수년치 이력 채팅방에서 불필요한 페이지 조회 방지)."""
+    (수년치 이력 채팅방에서 불필요한 페이지 조회 방지).
+    recency_key는 정렬 기준 필드명 — 채팅 목록은 lastUpdatedDateTime."""
     items = []
     url = path
     first = True
@@ -95,8 +99,8 @@ def _graph_get_all(access_token, path, params=None, limit=0, stop_before=None):
         if limit and len(items) >= limit:
             return items[:limit]
         if url and stop_before and page:
-            newest_key = page[-1].get("createdDateTime") or ""
-            if newest_key and newest_key < stop_before:
+            oldest = page[-1].get(recency_key) or ""
+            if oldest and oldest < stop_before:
                 break
     return items
 
@@ -389,7 +393,11 @@ class TeamsCollector:
 
         activities = []
         try:
-            chats = _graph_get_all(access_token, "/me/chats", {"$top": 50})
+            # 채팅 목록 자체도 최근 활동순이라 기간 이전 방부터 페이징 중단
+            chats = _graph_get_all(
+                access_token, "/me/chats", {"$top": 50},
+                stop_before=since, recency_key="lastUpdatedDateTime",
+            )
         except Exception as e:
             print(f"Error listing Teams chats: {e}")
             return []
@@ -428,14 +436,30 @@ class TeamsCollector:
         activities.extend(self.collect_calendar_events(days))
         return activities
 
-    def list_chats(self):
-        """Settings 화면용: 채팅방 목록(id/표시명/유형) 반환. 토큰 없으면 빈 리스트."""
+    def list_chats(self, days=None):
+        """Settings 화면용: 채팅방 목록(id/표시명/유형) 반환. 토큰 없으면 빈 리스트.
+        전체 채팅(수백 개)을 다 보지 않고 최근 days일 내 활동한 방만 — 멤버
+        이름 해석 호출도 그만큼 줄어든다."""
         access_token = self._token or get_access_token(self.token_file)
         if not access_token:
             return []
         self._token = access_token
+        if days is None:
+            days = load_teams_settings()["days"]
+        since = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         me_name = self._me_display_name(access_token)
-        chats = _graph_get_all(access_token, "/me/chats", {"$top": 50})
+        # 채팅 목록은 최근 활동순 — 마지막 항목이 기간 이전이면 다음 페이지 불필요
+        chats = _graph_get_all(
+            access_token, "/me/chats", {"$top": 50},
+            stop_before=since, recency_key="lastUpdatedDateTime",
+        )
+        chats = [
+            c for c in chats
+            if not c.get("lastUpdatedDateTime") or c["lastUpdatedDateTime"] >= since
+        ]
 
         # 토픽 없는 1:1만 멤버 조회가 필요 — 병렬로 한 번씩만 호출해 빠르게
         need_members = [

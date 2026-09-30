@@ -891,7 +891,7 @@ class WeeklyPulseApp:
                 ),
                 ft.Container(
                     content=self.excluded_chats_list,
-                    border=ft.border.all(1, ft.Colors.GREY_300),
+                    border=ft.Border.all(1, ft.Colors.GREY_300),
                     border_radius=8,
                     padding=12,
                     height=220,
