@@ -253,10 +253,41 @@ def t_sharepoint():
     from sharepoint_collector import SharePointCollector
     col = SharePointCollector()
     try:
-        acts = col.collect_activity(days=7)
+        # 버전 비교(다운로드+COM)는 느려서 여기선 수정 목록 수집만 확인 — 비교는 COL-13
+        acts = col.collect_activity(days=7, with_changes=False)
         return ok(f"SharePoint/OneDrive 수정 파일 {len(acts)}건")
     except Exception as e:
         return fail(str(e)[:80])
+
+
+def t_office_com_diff():
+    """Office COM으로 xlsx 두 버전을 읽어 변경 줄을 뽑는지 (SharePoint 버전 비교 경로)"""
+    if sys.platform != "win32":
+        return skip("Windows 전용")
+    import tempfile
+    import openpyxl
+    import office_reader
+    tmp = tempfile.mkdtemp(prefix="wr_test_")
+    paths = []
+    for i, rows in enumerate([[("항목", "담당"), ("DB접속 암호화", "박성수")],
+                              [("항목", "담당"), ("DB접속 암호화 (평문제거)", "박성수")]]):
+        wb = openpyxl.Workbook()
+        wb.active.title = "배포"
+        for r in rows:
+            wb.active.append(r)
+        path = os.path.join(tmp, f"v{i}.xlsx")
+        wb.save(path)
+        paths.append(path)
+    with office_reader.office_app("Excel") as app:
+        if app is None:
+            return skip("Excel 미설치")
+        old, new = (office_reader.document_lines(app, "Excel", p) for p in paths)
+    if old is None or new is None:
+        return fail("COM으로 xlsx 읽기 실패")
+    added, removed = office_reader.diff_lines(old, new)
+    if added != ["[배포] DB접속 암호화 (평문제거) | 박성수"] or removed != ["[배포] DB접속 암호화 | 박성수"]:
+        return fail(f"diff 불일치: +{added} -{removed}")
+    return ok("COM 읽기 + 버전 diff 정상 (+1/-1줄)")
 
 
 def t_file_watcher_watchdirs():
@@ -338,6 +369,42 @@ def t_summary_cache():
             return fail("get_summary_cache 없음")
 
 
+def t_shared_doc_split():
+    """SharePoint: 내가 수정한 문서는 Excel, 파트원만 수정한 문서는 '공유 문서 변경'으로
+    분리되고, 공유 문서 변경은 STEP 2 요약 입력에서 빠지는지"""
+    from program_sections import build_program_sections, sections_digest, SHARED_DOCS
+
+    def sp(name, editors):
+        return {"timestamp": "2026-09-29T23:59:59", "source": "sharepoint", "action": "modified",
+                "file_path": f"SharePoint 파일: {name}", "file_type": "sharepoint",
+                "details": json.dumps({"name": name, "editors": editors, "summary": f"{name} 변경"})}
+
+    me = "홍길동(POS서버) - 팀A"
+    secs = build_program_sections(
+        [sp("내파일.xlsx", ["홍길동(POS서버) - 팀B", "김철수(POS) - 팀A"]),
+         sp("팀파일.xlsx", ["김철수(POS) - 팀A"])],
+        me_name=me,
+    )
+    by_name = {s["name"]: [i["title"] for i in s["items"]] for s in secs}
+    if by_name.get("Excel") != ["내파일.xlsx (SharePoint)"] or by_name.get(SHARED_DOCS) != ["팀파일.xlsx (SharePoint)"]:
+        return fail(f"분류 오류: {by_name}")
+    if "팀파일" in sections_digest(secs):
+        return fail("공유 문서 변경이 STEP 2 입력에 포함됨")
+    return ok("내 수정→Excel, 파트원 수정→공유 문서 변경, STEP 2 제외")
+
+
+def t_split_sequence():
+    """요약 줄 안의 번호 목록 분리 — IP·버전·날짜는 번호로 오인하지 않는지"""
+    from program_sections import split_sequence
+    got = split_sequence("개선 요청: 1. 데이터 수집 문제 2. 중복 제거 3. 요약 확대")
+    if got != {"head": "개선 요청:", "items": ["1. 데이터 수집 문제", "2. 중복 제거", "3. 요약 확대"]}:
+        return fail(f"분리 오류: {got}")
+    for text in ("개발 DB 10.253.42.50 1526 접속", "v3.0 배포 후 2. 항목만", "09/29(화) 1. 단독 항목"):
+        if split_sequence(text)["items"]:
+            return fail(f"오탐: {text}")
+    return ok("번호 목록 분리 + IP/버전/단독 번호 오탐 없음")
+
+
 # ───────────────────────── AI 분석 ─────────────────────────
 
 def t_llm_templates():
@@ -378,7 +445,7 @@ def t_markdown_report():
     rg = ReportGenerator()
     data = rg.collect_weekly_data()
     md = rg.generate_markdown(data)
-    required = ["요약", "주요 하이라이트", "소스별 활동"]
+    required = ["STEP 1. 프로그램별 상세 활동 내역", "STEP 2. 업무 요약", "이번 주 핵심 요약"]
     missing = [r for r in required if r not in md]
     if missing:
         return fail(f"섹션 누락: {missing}")
@@ -485,12 +552,15 @@ TESTS = [
     ("COL-10", "수집", "감시 폴더 설정", t_file_watcher_watchdirs),
     ("COL-11", "수집", "OneNote 수집(라이브)", t_onenote),
     ("COL-12", "수집", "SharePoint/OneDrive 수집(라이브)", t_sharepoint),
+    ("COL-13", "수집", "Office COM 읽기 + 버전 diff", t_office_com_diff),
 
     ("PROC-01", "데이터 가공", "회의 중복 제거(teams 우선)", t_meeting_dedupe),
     ("PROC-02", "데이터 가공", "일시 파일(created+deleted) 제거", t_transient_files),
     ("PROC-03", "데이터 가공", "경로 정규화", t_path_normalize),
     ("PROC-04", "데이터 가공", "민감 URL 필터(OAuth 콜백)", t_sensitive_url_filter),
     ("PROC-05", "데이터 가공", "요약 캐시 조회", t_summary_cache),
+    ("PROC-06", "데이터 가공", "공유 문서 변경 분리(내 수정/파트원 수정)", t_shared_doc_split),
+    ("PROC-07", "데이터 가공", "요약 번호 목록 줄바꿈 분리", t_split_sequence),
 
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
