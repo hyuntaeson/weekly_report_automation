@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from weekly_report import paths
@@ -217,14 +218,13 @@ class TopicQueryRAG:
         past_hits = (self.retrieve(topic_vectors, past_from, past_to, past_pool, PAST_TOP_K)
                      if past_pool else [[] for _ in topics])
 
-        sections = []
-        for topic, hits, old in zip(topics, week_hits, past_hits):
-            if not hits:
-                continue  # 이번 주 근거가 없으면 지난 기록도 붙이지 않고 섹션 생략
-            section = self._summarize(topic, hits, old)
-            if section:
-                sections.append(section)
-        return sections
+        # 이번 주 근거가 없는 주제는 지난 기록도 붙이지 않고 생략. 주제별 요약(LLM 대기)은 동시에
+        jobs = [(topic, hits, old) for topic, hits, old in zip(topics, week_hits, past_hits) if hits]
+        if not jobs:
+            return []
+        with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as pool:
+            results = list(pool.map(lambda job: self._summarize(*job), jobs))
+        return [section for section in results if section]
 
     def _summarize(self, topic, hits, old):
         evidence = []
@@ -243,7 +243,7 @@ class TopicQueryRAG:
             for i, e in enumerate(evidence, start=1)
         ) + "\n</evidence>"
         output = self.llm.complete(RAG_PROMPT.format(topic=topic), body,
-                                   max_tokens=800, max_input=8000, temperature=0)
+                                   max_tokens=800, max_input=8000, temperature=0, cache=True)
         bullets = parse_cited_bullets(output, len(evidence))
         if output and output.strip().upper().startswith("NONE"):
             return None  # 검색은 걸렸지만 LLM이 주제와 무관하다고 판단

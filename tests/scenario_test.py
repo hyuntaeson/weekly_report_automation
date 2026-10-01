@@ -668,6 +668,98 @@ def t_rag_sections():
     return ok(f"{len(sections)}개 주제 — " + ", ".join(s["topic"] for s in sections))
 
 
+def t_expected_qa_check():
+    """STEP 3 출력 검증(하네스): Q/A 짝 맞추기, 과거 대화 [P#]는 질문에만, 근거 없는 답변은 '확인 필요',
+    이번 주에 이미 한 질문 반복 감지"""
+    from weekly_report.ai.questions import is_repeat, parse_qa
+    output = (
+        "Q: 네이버 오픈은 몇시야? [P1]\n"
+        "A: 17시 30분 파일럿 오픈 예정 [2][P1]\n"
+        "Q: 답변 없는 질문\n"
+        "Q: KIS 점포 배포해도 되는 거지? [P9]\n"
+        "A: 기존 KIS 검증 동작이라 배포 영향 없음\n"
+        "Q: 원인은 뭐야?\n"
+        "A: 원인은 확인 필요 [7]"
+    )
+    pairs = parse_qa(output, evidence_count=3, past_count=2)
+    if len(pairs) != 3:
+        return fail(f"Q/A 짝 불일치: {pairs}")
+    (q1, a1, r1, p1), (q2, a2, r2, p2), (q3, a3, r3, p3) = pairs
+    if p1 != [1] or "[P" in q1 or "[P" in a1 or r1 != [2]:
+        return fail(f"과거 대화 번호 처리 실패: {pairs[0]}")
+    if p2 != [] or not a2.endswith("(확인 필요)"):
+        return fail(f"근거 없는 답변 표시 실패: {pairs[1]}")
+    if r3 != [] or "[7]" in a3 or a3.endswith("(확인 필요)"):
+        return fail(f"없는 근거 번호 처리 실패: {pairs[2]}")
+    asked = ["내가 글들을 좀 늦게 봤는데 네이버점포 거래는 잘적용되는지 봐주고"]
+    if not is_repeat("내가 글들을 좀 늦게 봤는데, 네이버점포 거래는 잘 적용되는지 봐주고?", asked):
+        return fail("반복 질문 미감지")
+    if is_repeat("KICC DLL 예외는 배포 후 문제 없는 거지?", asked):
+        return fail("다른 질문을 반복으로 오판")
+    return ok("Q/A 짝·[P#] 질문 전용·근거 없음 표시·없는 번호 제거·반복 질문 감지 정상")
+
+
+def t_expected_qa():
+    """실데이터 STEP 3: 예상질문자 메시지 → 성향 → 예상 질문 5개 → Markdown 'STEP 3'"""
+    from weekly_report.ai.questions import QUESTION_COUNT, ExpectedQuestions
+    from weekly_report.report.generator import ReportGenerator
+    rg = ReportGenerator()
+    week_start, week_end = rg._resolve_week_range(None, None)
+    acts = rg.fetch_week_activities(week_start, week_end)
+    qa = ExpectedQuestions(rg)
+    if not qa.enabled:
+        return skip("예상질문자 미설정 또는 LiteLLM 설정 없음")
+    if not acts:
+        return skip("이번 주 활동 없음")
+    points = rg._summarize_week(rg.build_program_sections(acts))
+    sections = qa.build_sections(acts, week_start, week_end, points)
+    if not sections:
+        return skip("예상질문자의 Teams 메시지 없음")
+    for s in sections:
+        numbers = {e["n"] for e in s["evidence"]}
+        past_ids = {p["n"] for p in s["past"]}
+        if not 1 <= len(s["qa"]) <= QUESTION_COUNT:
+            return fail(f"[{s['name']}] 질문 수 {len(s['qa'])}")
+        for item in s["qa"]:
+            cited = {int(n) for n in re.findall(r"\[(\d+)\]", item["a"])}
+            if not cited <= numbers or not set(item["past"]) <= past_ids:
+                return fail(f"[{s['name']}] 번호 불일치: {item}")
+            if not cited and "확인 필요" not in item["a"]:
+                return fail(f"[{s['name']}] 근거도 '확인 필요'도 없는 답변: {item['a']}")
+    md = rg.generate_markdown(rg.compose_weekly_data(week_start, week_end, acts, {"expected_qa": sections}))
+    if "## STEP 3. 예상 질문 & 답변" not in md:
+        return fail("Markdown에 STEP 3 없음")
+    s = sections[0]
+    return ok(f"{s['name']}: 질문 {len(s['qa'])}개, 성향 {len(s['style'])}줄, 과거 대화 연결 {len(s['past'])}건")
+
+
+def t_report_status_panel():
+    """메인 화면 보고서 생성 상태: 생성대기 → 작성 중(버튼 비활성) → 생성완료(폴더 아이콘),
+    완료 후 늦게 온 경과 시간 갱신(only_if)이 완료 표시를 덮어쓰지 않는지"""
+    from types import SimpleNamespace
+    from weekly_report.gui.app import WeeklyPulseApp
+    app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+    app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None)
+    app.show_snack = lambda msg: None
+    app.total_hours, app.active_tools, app.most_used, app.stat_value_refs = "0 hrs", 0, "-", {}
+    app.create_control_panel()
+    button = app.generate_button
+    if app.report_status_text.value != "생성대기" or app.report_folder_button.visible:
+        return fail("초기 상태가 생성대기가 아님")
+    app.set_report_status("작성 중", detail="수집 중", requested_at="10:20:30")
+    if not button.disabled or app.report_time_text.value != "10:20:30":
+        return fail("작성 중 표시/버튼 비활성 실패")
+    app.set_report_status("주간보고 생성완료", detail="소요 30초 · a.md", output_path="reports/a.md")
+    app.set_report_status(detail="수집 중 · 경과 31초", only_if="작성 중")  # 늦게 온 타이머 갱신
+    if (app.report_status_text.value != "주간보고 생성완료" or button.disabled
+            or app.report_detail_text.value != "소요 30초 · a.md" or not app.report_folder_button.visible):
+        return fail(f"완료 표시 실패: {app.report_state}")
+    app.set_report_status("작성 중", detail="수집 중")
+    if app.report_folder_button.visible:
+        return fail("새 생성 시작 후에도 폴더 아이콘이 남음")
+    return ok("생성대기→작성 중(버튼 비활성)→생성완료(폴더 아이콘), 늦은 타이머 갱신 무시 정상")
+
+
 # ───────────────────────── 실행 ─────────────────────────
 
 TESTS = [
@@ -706,6 +798,8 @@ TESTS = [
     ("AI-03", "AI 분석", "LangChain/LangGraph 임포트", t_langchain_present),
     ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
     ("AI-05", "AI 분석", "RAG 주제 질의 섹션 (실데이터)", t_rag_sections),
+    ("AI-06", "AI 분석", "STEP 3 예상 질문 출력 검증 (하네스)", t_expected_qa_check),
+    ("AI-07", "AI 분석", "STEP 3 예상 질문 & 답변 (실데이터)", t_expected_qa),
 
     ("RPT-01", "보고서 생성", "Markdown 섹션 완전성", t_markdown_report),
     ("RPT-02", "보고서 생성", "Word(docx) 생성", t_word_report),
@@ -718,6 +812,7 @@ TESTS = [
     ("GUI-03", "GUI·실행", "통합 수집기 임포트", t_integrated_collector),
     ("GUI-04", "GUI·실행", "예상질문자 설정 (추가·삭제)", t_expected_questioner_settings),
     ("GUI-05", "GUI·실행", "주제 질의 설정 (추가·삭제)", t_rag_topic_settings),
+    ("GUI-06", "GUI·실행", "보고서 생성 상태 표시", t_report_status_panel),
 ]
 
 if __name__ == "__main__":

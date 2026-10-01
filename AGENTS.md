@@ -28,10 +28,12 @@
 - import는 `from weekly_report.<패키지>.<모듈> import ...` 절대 경로
 - 파일 경로는 `weekly_report/paths.py` 상수만 사용 — 실행 폴더 기준 상대 경로(`"config/..."`) 금지
 - GUI 새 화면/섹션은 `gui/`에 mixin 모듈로 추가하고 `WeeklyPulseApp` 상속 목록에 넣는다
+- **Flet 0.86: 화면 갱신은 페이지 컨텍스트에 묶임** — 일반 `threading.Thread`에서 `page.update()`하면 오류 없이 무시된다. 백그라운드 작업은 `page.run_thread(fn)`, 주기 갱신은 `page.run_task(async_fn)` 사용
+- LLM 응답 캐시(`complete(..., cache=True)`)는 temperature 0인 보고서 분석 단계 호출에만 — 응답을 검증해 버리고 재시도하는 수집 단계 호출에는 쓰지 않는다
 
 ## 검증
 
-- 기능 테스트: `python tests/scenario_test.py` (42건, 결과는 `test_reports/*.xlsx`)
+- 기능 테스트: `python tests/scenario_test.py` (45건, 결과는 `test_reports/*.xlsx`)
 - 구버전 통합 테스트: `python tests/legacy/test_all_completed.py`
 - 테스트에서 보고서를 만들 때는 `output_dir="test_reports"` 지정 — `reports/`에 쓰지 않는다
 - 임시 스크립트는 `_tmp_*.py`로 만들고 작업 후 삭제. 남기려면 tests/ 개념으로 정리

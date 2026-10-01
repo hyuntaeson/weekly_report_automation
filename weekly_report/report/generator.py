@@ -9,6 +9,7 @@ import fnmatch
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -55,6 +56,7 @@ class ReportGenerator:
         )
         self.environment.filters["circled"] = self._circled
         self.environment.filters["split_seq"] = split_sequence
+        self.on_progress = None  # GUI가 진행 단계를 받아 상태 표시에 씀 (선택)
 
     def fetch_week_activities(self, week_start, week_end):
         """주간 활동을 DB에서 읽어 노이즈 제거·중복 제거·정규화까지 적용해 반환.
@@ -80,14 +82,37 @@ class ReportGenerator:
         _, me_name = self._teams_context()
         # 파트원만 수정한 공유 문서는 내 업무가 아니므로 주제 분석에서 제외
         my_activities = [a for a in activities if is_my_work(a, me_name)]
-        return {
-            "teams_my": self._summarize_my_teams_messages(activities),
-            "topics": self._cluster_topics(my_activities),
-            "rag_sections": self._rag_sections(activities, week_start, week_end),
-            "week_summary": self._summarize_week(
-                self.build_program_sections(activities)
-            ),
-        }
+        # 서로 독립인 분석(대부분 LLM 응답 대기)은 동시에 — 차례로 돌리면 시간이 합으로 늘어남
+        self._report_progress("AI 분석 중 (Teams 요약 · 주제 분류 · 핵심 요약 · 주제 질의)")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            teams_my = pool.submit(self._summarize_my_teams_messages, activities)
+            topics = pool.submit(self._cluster_topics, my_activities)
+            week_summary = pool.submit(self._summarize_week, self.build_program_sections(activities))
+            rag_sections = pool.submit(self._rag_sections, activities, week_start, week_end)
+            week_summary, rag_sections = week_summary.result(), rag_sections.result()
+            # STEP 3은 STEP 2 결과(핵심 요약·주제 질의 요약)를 '보고 내용'으로 삼는다 —
+            # 이 둘이 끝나는 대로 시작해서 Teams 요약·주제 분류와 겹쳐 돌린다
+            self._report_progress("AI 분석 중 (예상 질문 생성)")
+            report_points = list(week_summary or []) + [
+                f"{s['topic']}: {b}" for s in rag_sections for b in s["bullets"]
+            ]
+            expected_qa = self._expected_questions(activities, week_start, week_end, report_points)
+            return {
+                "teams_my": teams_my.result(),
+                "topics": topics.result(),
+                "rag_sections": rag_sections,
+                "week_summary": week_summary,
+                "expected_qa": expected_qa,
+            }
+
+    def _report_progress(self, message):
+        """GUI 상태 표시용 진행 단계 알림 (on_progress 콜백이 있을 때만)"""
+        callback = getattr(self, "on_progress", None)
+        if callback:
+            try:
+                callback(message)
+            except Exception:
+                pass
 
     def compose_weekly_data(self, week_start, week_end, activities, extras=None):
         """필터링된 활동 + 분석 결과를 보고서용 weekly_data dict로 조립."""
@@ -124,6 +149,7 @@ class ReportGenerator:
             ),
             "topics": extras.get("topics") or [],
             "rag_sections": extras.get("rag_sections") or [],
+            "expected_qa": extras.get("expected_qa") or [],
         }
 
     def collect_weekly_data(self, week_start=None, week_end=None):
@@ -217,6 +243,29 @@ class ReportGenerator:
                     row[2].text = str(stat["items"])
                     row[3].text = f"{stat['days']}일"
 
+            expected_qa = weekly_data.get("expected_qa") or []
+            if expected_qa:
+                para(document, "STEP 3. 예상 질문 & 답변", size=15, bold=True, space_before=16)
+            for section in expected_qa:
+                para(document, f"예상질문자: {section['name']}", size=12, bold=True, space_before=6)
+                if section.get("style"):
+                    para(document, "질문 성향: " + " · ".join(section["style"]), size=9.5, italic=True, indent=0.4)
+                for number, item in enumerate(section["qa"], start=1):
+                    past = f"  ↳ 지난 대화 {', '.join(item['past'])}" if item.get("past") else ""
+                    para(document, f"Q{number}. {item['q']}{past}", bold=True, indent=0.4, space_before=4)
+                    para(document, f"A. {item['a']}", indent=0.8)
+                if section.get("past"):
+                    para(document, "지난 대화: " + " · ".join(
+                        f"{p['n']} {p['when']} {p['chat']} — \"{p['text']}\"" for p in section["past"]
+                    ), size=9, italic=True, indent=0.4)
+                if section.get("evidence"):
+                    para(document, "근거: " + " · ".join(
+                        f"[{e['n']}] {e['label']}" for e in section["evidence"]
+                    ), size=9, italic=True, indent=0.4)
+            if expected_qa:
+                para(document, "※ 내가 참여한 Teams 대화만 사용 · 근거로 확인되지 않는 내용은 '확인 필요'로 표시",
+                     size=9, italic=True, space_before=6)
+
             document.save(str(output))
         except Exception as error:
             print(f"Warning: Word report fallback activated: {error}")
@@ -228,6 +277,7 @@ class ReportGenerator:
         self, weekly_data, formats=("markdown", "word"), output_dir=paths.REPORTS_DIR
     ) -> dict[str, str | None]:
         """지정된 포맷으로 보고서 파일 저장."""
+        self._report_progress("보고서 파일 저장 중")
         normalized_formats = {fmt.lower() for fmt in formats}
         report_dir = (
             (self.base_dir / output_dir).resolve()
@@ -358,7 +408,7 @@ class ReportGenerator:
                 paths.LITELLM_CONFIG
             ).complete(
                 self.WEEK_SUMMARY_PROMPT, digest,
-                max_tokens=1500, max_input=12000,
+                max_tokens=1500, max_input=12000, temperature=0, cache=True,
             )
         except Exception as e:
             print(f"Warning: weekly summary failed: {e}")
@@ -488,7 +538,7 @@ class ReportGenerator:
         )
         try:
             from weekly_report.ai.llm_summarizer import LLMSummarizer
-            result = LLMSummarizer().complete(prompt, numbered, max_tokens=500)
+            result = LLMSummarizer().complete(prompt, numbered, max_tokens=500, temperature=0, cache=True)
             if not result or "NONE" in result.upper():
                 return []
             picked = []
@@ -529,6 +579,21 @@ class ReportGenerator:
             return rag.build_sections(activities, week_start, week_end)
         except Exception as e:
             print(f"Warning: topic query (RAG) failed: {e}")
+            return []
+
+    def _expected_questions(self, activities, week_start, week_end, report_points):
+        """STEP 3: 예상질문자별 예상 질문 & 답변 (ai/questions.py).
+        예상질문자 미설정·LiteLLM 미설정·실패 시 빈 리스트 (섹션 생략)."""
+        if not week_start or not week_end or not report_points:
+            return []
+        try:
+            from weekly_report.ai.questions import ExpectedQuestions
+            qa = ExpectedQuestions(self, paths.LITELLM_CONFIG)
+            if not qa.enabled:
+                return []
+            return qa.build_sections(activities, week_start, week_end, report_points)
+        except Exception as e:
+            print(f"Warning: expected questions (STEP 3) failed: {e}")
             return []
 
     def _dedupe_meetings(self, activities):

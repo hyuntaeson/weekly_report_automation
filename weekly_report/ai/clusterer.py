@@ -13,7 +13,10 @@
 import json
 import math
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
+import numpy as np
 import requests
 
 from weekly_report import paths
@@ -23,6 +26,8 @@ from weekly_report.storage.vector_store import ActivityVectorStore
 
 DB_PATH = paths.DB_PATH
 _migrated = False
+_VECTOR_MEMO = {}  # activity_key → (임베딩 텍스트, 벡터) — 프로세스 안에서 VectorDB 재조회 방지
+_MEMO_LOCK = threading.Lock()
 
 EMBEDDING_MODEL = "azure/text-embedding-3-large"
 # 코사인 유사도가 이 값 이상이면 같은 주제로 묶는다 (0~1, 높을수록 엄격)
@@ -117,14 +122,22 @@ class ActivityClusterer:
         global _migrated
         store = ActivityVectorStore()
         keys = [ActivityDatabase.activity_key(a) for a in activities]
-        cached = {}
+        # 한 번 읽은 벡터는 프로세스 메모리에 보관 — 저장소 열기(수 초)를 클러스터링·RAG·STEP 3이
+        # 반복하지 않도록, GUI에서는 두 번째 보고서 생성부터 저장소를 거의 열지 않음
+        with _MEMO_LOCK:
+            cached = {k: _VECTOR_MEMO[k] for k in keys if k in _VECTOR_MEMO}
+        unknown = [k for i, k in enumerate(keys) if cached.get(k, ("",))[0] != texts[i]]
         try:
             if not _migrated:
                 moved = store.migrate_from_sqlite(DB_PATH)
                 if moved:
                     print(f"VectorDB: SQLite 임베딩 {moved}건 이전 완료")
                 _migrated = True
-            cached = store.get_vectors(keys)
+            if unknown:
+                fetched = store.get_vectors(unknown)
+                cached.update(fetched)
+                with _MEMO_LOCK:
+                    _VECTOR_MEMO.update(fetched)
         except Exception as e:
             print(f"Warning: VectorDB read failed: {e}")
 
@@ -145,6 +158,8 @@ class ActivityClusterer:
             for i, vec in zip(missing, new_vecs):
                 vectors[i] = vec
                 to_save.append((activities[i], texts[i], vec))
+            with _MEMO_LOCK:
+                _VECTOR_MEMO.update({keys[i]: (texts[i], vectors[i]) for i in missing})
             try:
                 store.upsert(to_save)
             except Exception as e:
@@ -166,25 +181,31 @@ class ActivityClusterer:
         all_vectors = self._embed_with_cache(activities, texts)
         if not all_vectors:
             return []
-        vectors = [all_vectors[i] for i in keep]
+        X = np.asarray([all_vectors[i] for i in keep], dtype=np.float64)
 
-        clusters = []
-        for idx, vec in zip(keep, vectors):
-            best, best_sim = None, -1.0
-            for cluster in clusters:
-                sim = self._cosine(vec, cluster["centroid"])
-                if sim > best_sim:
-                    best, best_sim = cluster, sim
-            if best is not None and best_sim >= threshold:
-                best["items"].append(activities[idx])
-                # 센트로이드 이동평균
-                n = len(best["items"])
-                best["centroid"] = [
-                    (c * (n - 1) + v) / n for c, v in zip(best["centroid"], vec)
-                ]
+        # 그리디 클러스터링: 가장 가까운 센트로이드와 코사인 유사도가 기준 이상이면 합류(센트로이드
+        # 이동평균), 아니면 새 클러스터. 수백 건 × 3072차원이라 행렬 연산(numpy)으로 계산
+        centroids = np.empty_like(X)
+        centroid_norms = np.empty(len(X))
+        members = []
+        norms = np.linalg.norm(X, axis=1)
+        for row, idx in enumerate(keep):
+            vec, norm = X[row], norms[row]
+            k = len(members)
+            if k:
+                denom = centroid_norms[:k] * norm
+                sims = np.divide(centroids[:k] @ vec, denom, out=np.zeros(k), where=denom > 0)
+                best = int(np.argmax(sims))
+            if k and sims[best] >= threshold:
+                members[best].append(activities[idx])
+                n = len(members[best])
+                centroids[best] = (centroids[best] * (n - 1) + vec) / n
+                centroid_norms[best] = np.linalg.norm(centroids[best])
             else:
-                clusters.append({"items": [activities[idx]], "centroid": vec})
+                centroids[k], centroid_norms[k] = vec, norm
+                members.append([activities[idx]])
 
+        clusters = [{"items": items, "centroid": centroids[i].tolist()} for i, items in enumerate(members)]
         clusters.sort(key=lambda c: -len(c["items"]))
         return clusters
 
@@ -207,13 +228,16 @@ class ActivityClusterer:
     def build_topics(self, activities, min_cluster_size=2):
         """보고서용 주제 목록 생성.
         반환: [{"name", "count", "examples": [str...]}] 건수 내림차순."""
-        clusters = self.cluster_activities(activities)
+        clusters = [c for c in self.cluster_activities(activities)[:MAX_TOPICS_IN_REPORT]
+                    if len(c["items"]) >= min_cluster_size]
+        if not clusters:
+            return []
+        # 클러스터 이름 짓기(LLM 대기)는 동시에
+        with ThreadPoolExecutor(max_workers=min(8, len(clusters))) as pool:
+            names = list(pool.map(lambda c: self.name_cluster(c["items"]), clusters))
         topics = []
-        for cluster in clusters[:MAX_TOPICS_IN_REPORT]:
+        for cluster, name in zip(clusters, names):
             items = cluster["items"]
-            if len(items) < min_cluster_size:
-                continue
-            name = self.name_cluster(items)
             examples = []
             seen = set()
             for item in items:

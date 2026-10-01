@@ -38,6 +38,10 @@
 - [x] GUI 자동 추적 시작 + 시작 시간 최적화 (~10s→~2s)
 - [x] Teams 수집/보고 기준 사용자 설정 (기간·채팅유형·제외 채팅방·업무만 요약)
 - [x] SharePoint/OneDrive 파일 수정 이력 수집 (동일 Graph 토큰 재사용)
+- [x] VectorDB(Qdrant 로컬 모드) — 활동 임베딩 + 날짜·소스·발신자 필터 검색
+- [x] RAG 주제 질의 요약 (STEP 2) — Settings 주제별 근거 인용 요약, 지난 4주 기록 연결
+- [x] STEP 3 예상 질문 & 답변 — 예상질문자(Teams) 질문 성향 학습 → 예상 Q&A 5개, 근거 없으면 '확인 필요'
+- [x] 보고서 생성 속도 개선(분석 병렬화·LLM 캐시·10분 내 재수집 생략) + 메인 화면 생성 상태 표시(요청 시각·진행 단계·폴더 바로가기)
 - [x] macOS 이식 준비 — win32 가드, Outlook은 Graph 폴백으로 플랫폼 무관 수집
 - [ ] Slack Bot Token 발급 및 연동 마무리
 
@@ -128,7 +132,7 @@ weekly_report_automation/
 │       ├── actions.py            # 추적·수집·보고서 생성 동작
 │       └── widgets.py            # 공용 컨트롤
 ├── tests/
-│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (42건 → test_reports/*.xlsx)
+│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (45건 → test_reports/*.xlsx)
 │   └── legacy/                   # 구버전 테스트 (test_all_completed 등)
 ├── scripts/
 │   ├── cleanup_data.py           # data/ 테스트 산출물 정리

@@ -22,6 +22,8 @@
 
 **완료율**: 약 95%+ (수집 소스 11종 + AI 분석/영속화 + LangGraph 파이프라인 + GUI 완성, Slack 토큰 발급·자동 스케줄링만 남음)
 
+**2026-10-01 추가**: 소스 `weekly_report/` 패키지 구조화, VectorDB(Qdrant)·RAG 주제 질의(STEP 2)·STEP 3 예상 질문 완료, 보고서 생성 약 104초→55~70초(재생성 27초) + 메인 화면 생성 상태 표시. 다음: 저장소 보관 정책 — 상세는 progress.md "다음 세션 시작점"
+
 **성과** (2026-09-30 기준):
 - 파일 시스템(실시간 감시+내용 캡처), IDE, Outlook(COM/Graph), Claude Code, Confluence, 브라우저(Chrome), Teams(채팅+일정), OneNote(섹션), **SharePoint/OneDrive(파일 수정)** — 전체 소스 정상 동작
 - 주간보고서 생성 완료 (Markdown + Word, 액션별 상세 + AI 요약 + 노이즈 필터링 + 민감 URL 제거)

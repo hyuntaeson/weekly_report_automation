@@ -1,8 +1,11 @@
 """추적 시작/중지, 소스별 수동 수집, 보고서 생성 — 무거운 모듈은 호출 시점에 lazy import."""
 
+import asyncio
 import json
 import os
 import threading
+import time
+from datetime import datetime
 
 import flet as ft
 
@@ -218,30 +221,63 @@ class ActionsMixin:
             self.show_snack(f"Error collecting Confluence: {ex}")
 
     def generate_report(self, e):
-        """Generate weekly report"""
-        try:
-            from weekly_report.collectors.integrated import IntegratedCollector
-            from weekly_report.report.generator import ReportGenerator
+        """Generate weekly report — 백그라운드 스레드에서 실행하고 상태 줄로 진행을 보여준다
+        (버튼 핸들러에서 바로 돌리면 1~2분 동안 눌렸는지 알 수 없음)."""
+        if self._report_state()["status"] == "작성 중":
+            self.show_snack("이미 주간보고를 작성 중입니다")
+            return
+        started = time.time()
+        step = {"text": "준비 중"}
+        self.set_report_status("작성 중", detail=step["text"],
+                               requested_at=datetime.now().strftime("%H:%M:%S"))
 
-            # 상시 실행 중인 건 파일 감시·브라우저뿐이라, IDE·Claude Code·Outlook·
-            # Teams 등은 보고서 직전에 한 번 수집해야 반영된다
-            IntegratedCollector([]).collect_once(
-                days=7, progress=lambda name: self.show_snack(f"최신 데이터 수집 중: {name}…")
-            )
-            self.show_snack("Generating weekly report...")
-            generator = ReportGenerator()
-            result = generator.generate_and_save_weekly_report()
-            generated_paths = [path for path in result["file_paths"].values() if path]
-            if generated_paths:
-                self.show_snack(f"보고서 생성 완료: {generated_paths[0]}")
+        def elapsed():
+            sec = int(time.time() - started)
+            return f"{sec // 60}분 {sec % 60:02d}초" if sec >= 60 else f"{sec}초"
+
+        def set_step(text):
+            step["text"] = text
+            self.set_report_status(detail=f"{text} · 경과 {elapsed()}", only_if="작성 중")
+
+        async def ticker():  # 단계가 길어도 경과 시간이 흐르는 게 보이도록 (Flet 이벤트 루프에서 1초마다)
+            while self._report_state()["status"] == "작성 중":
+                self.set_report_status(detail=f"{step['text']} · 경과 {elapsed()}", only_if="작성 중")
+                await asyncio.sleep(1)
+
+        def worker():
+            try:
+                from weekly_report.collectors.integrated import COLLECT_REUSE_MINUTES, IntegratedCollector
+                from weekly_report.report.generator import ReportGenerator
+
+                # 상시 실행 중인 건 파일 감시·브라우저뿐이라, IDE·Claude Code·Outlook·
+                # Teams 등은 보고서 직전에 수집해야 반영된다 (최근에 수집했으면 생략)
+                collected = IntegratedCollector([]).collect_if_stale(
+                    days=7, progress=lambda name: set_step(f"최신 데이터 수집 중: {name}")
+                )
+                if collected is None:
+                    set_step(f"최근 {COLLECT_REUSE_MINUTES}분 내 수집한 데이터 사용")
+                generator = ReportGenerator()
+                generator.on_progress = set_step
+                result = generator.generate_and_save_weekly_report()
+                generated_paths = [path for path in result["file_paths"].values() if path]
+                if not generated_paths:
+                    raise RuntimeError("보고서 생성 결과 파일이 없습니다")
                 print("Generated weekly report files:")
                 for path in generated_paths:
                     print(f"- {path}")
-            else:
-                self.show_snack("보고서 생성 결과 파일이 없습니다")
-        except Exception as ex:
-            print(f"Error generating weekly report: {ex}")
-            self.show_snack(f"Error generating weekly report: {ex}")
+                self.set_report_status(
+                    "주간보고 생성완료",
+                    detail=f"소요 {elapsed()} · {os.path.basename(generated_paths[0])}",
+                    output_path=generated_paths[0],
+                )
+            except Exception as ex:
+                print(f"Error generating weekly report: {ex}")
+                self.set_report_status("생성 실패", detail=f"{ex} · 경과 {elapsed()}")
+
+        # Flet 0.86은 화면 갱신이 페이지 컨텍스트에 묶여 있어서, 일반 threading.Thread에서
+        # page.update()를 부르면 오류 없이 무시됨 → page.run_thread로 실행해야 상태 줄이 갱신됨
+        self.page.run_task(ticker)
+        self.page.run_thread(worker)
 
     def preview_draft(self, e):
         """Preview draft report"""

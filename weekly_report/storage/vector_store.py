@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
@@ -29,6 +30,8 @@ from weekly_report.common.timeutil import to_local_datetime
 DEFAULT_PATH = paths.QDRANT_DIR
 COLLECTION = "activities"
 VECTOR_SIZE = 3072  # text-embedding-3-large
+# 로컬 모드는 같은 폴더를 동시에 두 클라이언트가 열 수 없음 — 보고서 분석 단계를 병렬로 돌릴 때 직렬화
+_LOCK = threading.RLock()
 
 
 def point_id(activity_key):
@@ -70,16 +73,17 @@ class ActivityVectorStore:
     @contextmanager
     def _client(self):
         os.makedirs(self.path, exist_ok=True)
-        client = QdrantClient(path=self.path)
-        try:
-            if not client.collection_exists(self.collection):
-                client.create_collection(
-                    self.collection,
-                    vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
-                )
-            yield client
-        finally:
-            client.close()
+        with _LOCK:
+            client = QdrantClient(path=self.path)
+            try:
+                if not client.collection_exists(self.collection):
+                    client.create_collection(
+                        self.collection,
+                        vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
+                    )
+                yield client
+            finally:
+                client.close()
 
     def count(self):
         with self._client() as client:

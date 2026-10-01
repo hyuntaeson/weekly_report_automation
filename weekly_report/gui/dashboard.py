@@ -1,5 +1,8 @@
 """대시보드 화면 — 실행 중인 앱 감지(Active Work Sessions), 주간 통계 카드, 보고서 생성 버튼."""
 
+import os
+import subprocess
+import sys
 import threading
 import time
 from collections import Counter
@@ -16,6 +19,8 @@ try:
 except ImportError:
     win32gui = win32process = None
     _WIN32_AVAILABLE = False
+
+_STATUS_LOCK = threading.Lock()  # 보고서 생성 상태: 작업 스레드와 경과 시간 타이머가 같이 갱신
 
 
 class DashboardMixin:
@@ -418,7 +423,7 @@ class DashboardMixin:
                     # 주 액션: 보고서 생성 — 패널 폭 전체의 다크 버튼
                     ft.Row(
                         [
-                            ft.Button(
+                            self._remember_generate_button(ft.Button(
                                 content=ft.Row(
                                     [
                                         ft.Icon(ft.Icons.ASSIGNMENT, size=22),
@@ -436,9 +441,10 @@ class DashboardMixin:
                                 on_click=self.generate_report,
                                 expand=True,
                                 height=52,
-                            ),
+                            )),
                         ],
                     ),
+                    self.create_report_status(),
                 ],
                 spacing=8,
             ),
@@ -446,6 +452,126 @@ class DashboardMixin:
             bgcolor=ft.Colors.GREY_50,
             border_radius=12,
         )
+
+    # ---------- 보고서 생성 상태 표시 ----------
+
+    REPORT_STATUS_STYLE = {
+        "생성대기": (ft.Colors.GREY_700, ft.Colors.GREY_200),
+        "작성 중": (ft.Colors.ORANGE_900, ft.Colors.ORANGE_100),
+        "주간보고 생성완료": (ft.Colors.GREEN_900, ft.Colors.GREEN_100),
+        "생성 실패": (ft.Colors.RED_900, ft.Colors.RED_100),
+    }
+
+    def _report_state(self):
+        """상태는 앱 객체에 보관 — 화면을 전환했다 돌아와도 유지"""
+        if not hasattr(self, "report_state"):
+            self.report_state = {"status": "생성대기", "requested_at": "--:--:--", "detail": "",
+                                 "output_path": None}
+        return self.report_state
+
+    def open_report_folder(self, e=None):
+        """생성된 보고서 파일이 있는 폴더를 탐색기로 열기 (Windows는 파일을 선택한 상태로)"""
+        path = self._report_state().get("output_path")
+        if not path:
+            return
+        path = os.path.abspath(path)
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", path])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", path])
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        except Exception as ex:
+            self.show_snack(f"폴더를 열 수 없습니다: {ex}")
+
+    def _remember_generate_button(self, button):
+        """작성 중에는 비활성화하려고 버튼을 보관 (화면 전환 시 새로 만들어지면 교체)"""
+        self.generate_button = button
+        button.disabled = self._report_state()["status"] == "작성 중"
+        return button
+
+    def create_report_status(self):
+        """Generate 버튼 아래 상태 줄: Status 칩 + 요청 시각 / 진행 단계·소요 시간.
+        (이 Flet 빌드는 Row 자식이 3개 이상이면 마지막이 사라져서 2개씩 중첩)"""
+        state = self._report_state()
+        fg, bg = self.REPORT_STATUS_STYLE.get(state["status"], self.REPORT_STATUS_STYLE["생성대기"])
+        self.report_status_text = ft.Text(state["status"], size=13, weight=ft.FontWeight.BOLD, color=fg)
+        self.report_status_chip = ft.Container(
+            content=self.report_status_text,
+            padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+            bgcolor=bg,
+            border_radius=999,
+        )
+        self.report_time_text = ft.Text(state["requested_at"], size=13, weight=ft.FontWeight.BOLD,
+                                        color=ft.Colors.BLACK)
+        self.report_detail_text = ft.Text(state["detail"], size=12, color=ft.Colors.GREY_700)
+        # 완료 시 파일명 옆 폴더 바로가기
+        self.report_folder_button = ft.Container(
+            content=ft.Icon(ft.Icons.FOLDER_OPEN, size=18, color=ft.Colors.BLUE),
+            tooltip="보고서 폴더 열기",
+            padding=4,
+            border_radius=6,
+            on_click=self.open_report_folder,
+            visible=bool(state.get("output_path")),
+        )
+        detail_row = ft.Row([self.report_detail_text, self.report_folder_button], spacing=6,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        status_group = ft.Row(
+            [ft.Text("Status", size=13, color=ft.Colors.GREY_600), self.report_status_chip],
+            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        time_group = ft.Row(
+            [ft.Text("요청 시각", size=13, color=ft.Colors.GREY_600), self.report_time_text],
+            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row([status_group, time_group], spacing=32,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    detail_row,
+                ],
+                spacing=6,
+            ),
+            padding=ft.Padding.symmetric(horizontal=14, vertical=10),
+            bgcolor=ft.Colors.WHITE,
+            border=ft.Border.all(1, ft.Colors.GREY_200),
+            border_radius=8,
+        )
+
+    def set_report_status(self, status=None, detail=None, requested_at=None, only_if=None,
+                          output_path=None):
+        """상태 값 갱신 + 화면에 있으면 바로 반영 (백그라운드 스레드에서 호출해도 됨).
+        only_if: 현재 상태가 이 값일 때만 갱신 (경과 시간 타이머가 완료 표시를 덮어쓰지 않도록)
+        output_path: 완료 시 생성 파일 — 폴더 바로가기 아이콘 표시. 상태가 바뀌면 지워짐."""
+        state = self._report_state()
+        with _STATUS_LOCK:
+            if only_if is not None and state["status"] != only_if:
+                return
+            if status is not None:
+                state["status"] = status
+                state["output_path"] = output_path
+            if detail is not None:
+                state["detail"] = detail
+            if requested_at is not None:
+                state["requested_at"] = requested_at
+        if getattr(self, "report_status_text", None) is None:
+            return
+        fg, bg = self.REPORT_STATUS_STYLE.get(state["status"], self.REPORT_STATUS_STYLE["생성대기"])
+        self.report_status_text.value = state["status"]
+        self.report_status_text.color = fg
+        self.report_status_chip.bgcolor = bg
+        self.report_time_text.value = state["requested_at"]
+        self.report_detail_text.value = state["detail"]
+        self.report_folder_button.visible = bool(state.get("output_path"))
+        button = getattr(self, "generate_button", None)
+        if button is not None:
+            button.disabled = state["status"] == "작성 중"
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     def create_stat_card(self, key, label, icon_name):
         """통계 카드 생성. key별 텍스트 참조를 남겨서 실시간 갱신이 가능하도록."""

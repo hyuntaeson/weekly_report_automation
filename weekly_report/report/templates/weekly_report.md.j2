@@ -88,3 +88,33 @@
 | {{ s.name }} | {{ s.count }} | {{ s["items"] }} | {{ s.days }}일 |
 {% endfor %}
 {% endif %}
+{% if expected_qa %}
+
+---
+
+## STEP 3. 예상 질문 & 답변
+{% for sec in expected_qa %}
+
+### 예상질문자: {{ sec.name }}
+{% if sec.style %}
+
+> **질문 성향** — {{ sec.style|join(" · ") }}
+{% endif %}
+{% for item in sec.qa %}
+
+**Q{{ loop.index }}. {{ item.q }}**{% if item.past %} <sub>↳ 지난 대화 {{ item.past|join(", ") }}</sub>{% endif %}
+
+- A. {{ item.a }}
+{% endfor %}
+{% if sec.past %}
+
+<sub>지난 대화: {% for p in sec.past %}{{ p.n }} {{ p.when }} {{ p.chat }} — "{{ p.text }}"{% if not loop.last %} · {% endif %}{% endfor %}</sub>
+{% endif %}
+{% if sec.evidence %}
+
+<sub>근거: {% for e in sec.evidence %}[{{ e.n }}] {{ e.label }}{% if not loop.last %} · {% endif %}{% endfor %}</sub>
+{% endif %}
+{% endfor %}
+
+<sub>※ 내가 참여한 Teams 대화만 사용 · 근거로 확인되지 않는 내용은 '확인 필요'로 표시</sub>
+{% endif %}

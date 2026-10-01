@@ -4,9 +4,11 @@ Integrated Activity Collector
 Combines file watching, IDE activity, Outlook activity, and browser activity collection
 """
 
+import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from weekly_report import paths
 from weekly_report.collectors.file_watcher import FileWatcher, FileActivityHandler
@@ -19,6 +21,26 @@ from weekly_report.collectors.onenote import OneNoteCollector
 from weekly_report.collectors.sharepoint import SharePointCollector
 from weekly_report.storage.database import ActivityDatabase
 from weekly_report.collectors.browser_server import BrowserActivityServer
+
+LAST_COLLECT_FILE = os.path.join(paths.DATA_DIR, "last_collect.json")
+COLLECT_REUSE_MINUTES = 10  # 이 시간 안에 다시 보고서를 만들면 수집을 생략
+
+
+def _load_last_collect():
+    try:
+        with open(LAST_COLLECT_FILE, encoding="utf-8") as f:
+            return float(json.load(f).get("at") or 0)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return 0.0
+
+
+def _save_last_collect():
+    try:
+        os.makedirs(os.path.dirname(LAST_COLLECT_FILE), exist_ok=True)
+        with open(LAST_COLLECT_FILE, "w", encoding="utf-8") as f:
+            json.dump({"at": time.time()}, f)
+    except OSError as e:
+        print(f"Warning: failed to save last collect time: {e}")
 
 
 class IntegratedCollector:
@@ -315,39 +337,59 @@ class IntegratedCollector:
         GUI는 파일 감시·브라우저 서버만 상시 실행하므로, 보고서 생성 직전에
         이걸 호출해야 IDE·Claude Code·Outlook·Teams 등이 보고서에 반영된다.
         한 소스가 실패해도 나머지는 계속 수집한다."""
-        if os.name == "nt":
-            try:
-                import pythoncom  # Outlook/Office COM은 스레드마다 초기화 필요
-                pythoncom.CoInitialize()
-            except Exception:
-                pass
-
-        steps = [
-            ("Claude Code", lambda: self.ai_tool_collector.save_to_database(
-                self.ai_tool_collector.collect_all_ai_tool_activity(hours=24 * days))),
-            ("IDE", lambda: self.ide_collector.save_to_database(
-                self.ide_collector.collect_all_ide_activity(days=days))),
-            ("Outlook", lambda: self.outlook_collector.save_to_database(
-                self.outlook_collector.collect_all_outlook_activity(days=days))),
-            ("Confluence", lambda: self.confluence_collector.save_to_database(
-                self.confluence_collector.collect_all_confluence_activity(days=days))),
-            ("Teams", lambda: self.teams_collector.save_to_database(
-                self.teams_collector.collect_all_teams_activity(days=days))),
-            ("OneNote", lambda: self.onenote_collector.save_to_database(
-                self.onenote_collector.collect_activity(days=days))),
-            ("SharePoint", lambda: self.sharepoint_collector.save_to_database(
-                self.sharepoint_collector.collect_activity(days=days))),
+        # 두 그룹을 동시에 수집. Graph 계열(Teams·OneNote·SharePoint·Outlook)은 같은 토큰 파일을
+        # 갱신하므로 그룹 안에서는 차례로, 로컬·Confluence 계열은 따로 돌린다.
+        groups = [
+            [
+                ("Teams", lambda: self.teams_collector.save_to_database(
+                    self.teams_collector.collect_all_teams_activity(days=days))),
+                ("SharePoint", lambda: self.sharepoint_collector.save_to_database(
+                    self.sharepoint_collector.collect_activity(days=days))),
+                ("OneNote", lambda: self.onenote_collector.save_to_database(
+                    self.onenote_collector.collect_activity(days=days))),
+                ("Outlook", lambda: self.outlook_collector.save_to_database(
+                    self.outlook_collector.collect_all_outlook_activity(days=days))),
+            ],
+            [
+                ("Claude Code", lambda: self.ai_tool_collector.save_to_database(
+                    self.ai_tool_collector.collect_all_ai_tool_activity(hours=24 * days))),
+                ("IDE", lambda: self.ide_collector.save_to_database(
+                    self.ide_collector.collect_all_ide_activity(days=days))),
+                ("Confluence", lambda: self.confluence_collector.save_to_database(
+                    self.confluence_collector.collect_all_confluence_activity(days=days))),
+            ],
         ]
         results = {}
-        for name, run in steps:
-            if progress:
-                progress(name)
-            try:
-                results[name] = run() or 0
-            except Exception as e:
-                results[name] = f"오류: {e}"
-                print(f"Warning: {name} collection failed: {e}")
+
+        def run_group(steps):
+            if os.name == "nt":
+                try:
+                    import pythoncom  # Outlook/Office COM은 스레드마다 초기화 필요
+                    pythoncom.CoInitialize()
+                except Exception:
+                    pass
+            for name, run in steps:
+                if progress:
+                    progress(name)
+                try:
+                    results[name] = run() or 0
+                except Exception as e:
+                    results[name] = f"오류: {e}"
+                    print(f"Warning: {name} collection failed: {e}")
+
+        with ThreadPoolExecutor(max_workers=len(groups)) as pool:
+            list(pool.map(run_group, groups))
+        _save_last_collect()
         return results
+
+    def collect_if_stale(self, days=7, progress=None, max_age_minutes=COLLECT_REUSE_MINUTES):
+        """마지막 수집 후 max_age_minutes가 지났을 때만 collect_once.
+        보고서를 반복 생성하며 품질을 볼 때 매번 수집(30초~)을 기다리지 않도록.
+        반환: 수집 결과 dict, 생략했으면 None."""
+        last = _load_last_collect()
+        if last and (time.time() - last) < max_age_minutes * 60:
+            return None
+        return self.collect_once(days=days, progress=progress)
 
     def stop(self):
         """Stop all collectors"""

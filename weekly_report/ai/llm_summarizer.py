@@ -11,10 +11,17 @@ LangChain LCEL 체인으로 구현 (prompt | model | parser):
 LangChain 미설치/프록시 실패 시 기존처럼 None을 반환해 호출자가 폴백.
 """
 
+import hashlib
 import json
 import os
+import sqlite3
+import time
 
 from weekly_report import paths
+
+# temperature 0(결정적) 호출의 응답 캐시 — 같은 입력이면 같은 출력이므로 결과는 그대로, 재생성만 빨라짐
+CACHE_DB = os.path.join(paths.DATA_DIR, "llm_cache.db")
+CACHE_TTL = 7 * 24 * 3600
 
 try:
     from langchain_core.output_parsers import StrOutputParser
@@ -113,7 +120,8 @@ class LLMSummarizer:
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            timeout=15,
+            # 응답이 길수록 오래 걸림 — 고정 15초면 긴 생성(STEP 3 등)이 타임아웃 후 재시도로 두 배 걸림
+            timeout=15 + max_tokens // 40,
         )
         prompt = ChatPromptTemplate.from_messages(
             [("system", "{system}"), ("user", "{text}")]
@@ -131,21 +139,67 @@ class LLMSummarizer:
     # ---------- 공개 API ----------
 
     def complete(self, system_prompt, user_text, max_tokens=None, temperature=0.3,
-                 max_input=4000):
+                 max_input=4000, cache=False):
         """임의 프롬프트로 LLM 호출. 체인 실패 시 None.
-        max_tokens는 응답 길이 상한(미지정 시 config), max_input은 입력 자르기 기준."""
+        max_tokens는 응답 길이 상한(미지정 시 config), max_input은 입력 자르기 기준.
+        cache=True + temperature 0이면 같은 입력의 응답을 재사용 (보고서 분석 단계용 —
+        응답을 검증해 버리고 다음 수집 때 재시도하는 수집 단계 호출에는 쓰지 않는다)."""
         if not self.enabled:
             return None
         chain = self._chain(max_tokens, temperature)
         if chain is None:
             return None
+        text = (user_text or "")[:max_input]
+        key = self._cache_key(system_prompt, text, max_tokens) if cache and temperature == 0 else None
+        cached = self._cache_get(key) if key else None
+        if cached is not None:
+            return cached
         try:
-            return chain.invoke(
-                {"system": system_prompt, "text": (user_text or "")[:max_input]}
-            ).strip()
+            result = chain.invoke({"system": system_prompt, "text": text}).strip()
         except Exception as error:
             print(f"Warning: LLM call failed, falling back: {error}")
             return None
+        if key and result:
+            self._cache_put(key, result)
+        return result
+
+    # ---------- 응답 캐시 (temperature 0 전용) ----------
+
+    def _cache_key(self, system_prompt, text, max_tokens):
+        model = str(self.config.get("model") or "")
+        raw = json.dumps([model, system_prompt, text, max_tokens], ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _cache_conn():
+        os.makedirs(os.path.dirname(CACHE_DB), exist_ok=True)
+        conn = sqlite3.connect(CACHE_DB, timeout=10)
+        conn.execute("CREATE TABLE IF NOT EXISTS llm_cache (key TEXT PRIMARY KEY, response TEXT, created REAL)")
+        return conn
+
+    def _cache_get(self, key):
+        try:
+            conn = self._cache_conn()
+            try:
+                row = conn.execute("SELECT response, created FROM llm_cache WHERE key = ?", (key,)).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return None
+        if row and time.time() - row[1] < CACHE_TTL:
+            return row[0]
+        return None
+
+    def _cache_put(self, key, response):
+        try:
+            conn = self._cache_conn()
+            try:
+                with conn:
+                    conn.execute("INSERT OR REPLACE INTO llm_cache VALUES (?, ?, ?)", (key, response, time.time()))
+            finally:
+                conn.close()
+        except sqlite3.Error as error:
+            print(f"Warning: LLM cache write failed: {error}")
 
     def summarize(self, text, max_len=300, template="default"):
         """텍스트를 LLM으로 요약. template은 PROMPT_TEMPLATES 키
