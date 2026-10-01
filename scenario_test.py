@@ -80,7 +80,7 @@ def t_embedding_call():
     c = ActivityClusterer()
     if not c.enabled:
         return skip("LiteLLM config 없음")
-    vecs = c._embed(["테스트 문장"])
+    vecs = c.embed(["테스트 문장"])
     if not vecs:
         return fail("임베딩 호출 실패")
     return ok(f"임베딩 성공 dim={len(vecs[0])}")
@@ -393,6 +393,43 @@ def t_shared_doc_split():
     return ok("내 수정→Excel, 파트원 수정→공유 문서 변경, STEP 2 제외")
 
 
+def t_vector_store():
+    """VectorDB(Qdrant 로컬): 저장·재조회·유사도 검색·날짜/소스/발신자 필터 (임시 폴더, 4차원 벡터)"""
+    import json as _json, shutil, tempfile
+    from vector_store import ActivityVectorStore
+    tmp = tempfile.mkdtemp(prefix="wr_qdrant_")
+    try:
+        store = ActivityVectorStore(path=tmp, vector_size=4)
+
+        def act(ts, source, path, sender=""):
+            return {"timestamp": ts, "action": "message", "file_path": path, "source": source,
+                    "details": _json.dumps({"sender": sender}, ensure_ascii=False)}
+
+        a1 = act("2026-09-28T10:00:00", "teams", "배포 일정", "김영호(POS) - 팀")
+        a2 = act("2026-09-29T10:00:00", "teams", "장애 대응", "홍길동(POS) - 팀")
+        a3 = act("2026-09-20T10:00:00", "outlook", "배포 공지")
+        store.upsert([(a1, "배포 일정", [1, 0, 0, 0]), (a2, "장애 대응", [0, 1, 0, 0]), (a3, "배포 공지", [0.9, 0.1, 0, 0])])
+        store.upsert([(a1, "배포 일정", [1, 0, 0, 0])])  # 같은 활동 재저장 → 덮어쓰기
+        if store.count() != 3:
+            return fail(f"건수 {store.count()} (재저장 중복)")
+        from database import ActivityDatabase
+        got = store.get_vectors([ActivityDatabase.activity_key(a1)])
+        if list(got.values())[0][0] != "배포 일정":
+            return fail("재조회 실패")
+        top = store.search([1, 0, 0, 0], limit=2)
+        if [h["text"] for h in top] != ["배포 일정", "배포 공지"]:
+            return fail(f"유사도 순서 오류: {[h['text'] for h in top]}")
+        if [h["text"] for h in store.search([1, 0, 0, 0], date_from="2026-09-25", date_to="2026-09-28")] != ["배포 일정"]:
+            return fail("날짜 필터 오류")
+        if {h["source"] for h in store.search([1, 0, 0, 0], sources=["outlook"])} != {"outlook"}:
+            return fail("소스 필터 오류")
+        if [h["text"] for h in store.search([1, 0, 0, 0], sender_contains="홍길동")] != ["장애 대응"]:
+            return fail("발신자 필터 오류")
+        return ok("저장·덮어쓰기·재조회·유사도 순서·날짜/소스/발신자 필터 정상")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def t_split_sequence():
     """요약 줄 안의 번호 목록 분리 — IP·버전·날짜는 번호로 오인하지 않는지"""
     from program_sections import split_sequence
@@ -584,6 +621,7 @@ TESTS = [
     ("PROC-05", "데이터 가공", "요약 캐시 조회", t_summary_cache),
     ("PROC-06", "데이터 가공", "공유 문서 변경 분리(내 수정/파트원 수정)", t_shared_doc_split),
     ("PROC-07", "데이터 가공", "요약 번호 목록 줄바꿈 분리", t_split_sequence),
+    ("PROC-08", "데이터 가공", "VectorDB 저장·필터 검색 (Qdrant)", t_vector_store),
 
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),

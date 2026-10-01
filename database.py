@@ -126,7 +126,8 @@ class ActivityDatabase:
             )
         ''')
 
-        # 활동 임베딩 벡터 저장 — 주간 데이터 누적으로 유사 작업 검색을 가능하게.
+        # (레거시) 예전 임베딩 저장 테이블 — 이제 임베딩은 VectorDB(vector_store.py)에 저장하고,
+        # 이 테이블은 최초 1회 VectorDB로 이전할 때 원본으로만 읽는다.
         # activity_key = "timestamp|action|file_path|source" (activities UNIQUE 키와 동일 조합)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS activity_embeddings (
@@ -189,32 +190,6 @@ class ActivityDatabase:
             str(activity.get(k) or "")
             for k in ("timestamp", "action", "file_path", "source")
         )
-
-    def get_embeddings(self, keys):
-        """activity_key 목록에 해당하는 저장된 임베딩 벡터를 dict로 반환"""
-        if not keys:
-            return {}
-        cursor = self.conn.cursor()
-        placeholders = ",".join("?" for _ in keys)
-        rows = cursor.execute(
-            f"SELECT activity_key, text, vector FROM activity_embeddings "
-            f"WHERE activity_key IN ({placeholders})",
-            keys,
-        ).fetchall()
-        return {
-            row["activity_key"]: (row["text"], json.loads(row["vector"]))
-            for row in rows
-        }
-
-    def save_embeddings(self, items):
-        """(activity_key, text, vector) 목록 저장"""
-        cursor = self.conn.cursor()
-        cursor.executemany(
-            "INSERT OR REPLACE INTO activity_embeddings "
-            "(activity_key, text, vector) VALUES (?, ?, ?)",
-            [(k, t, json.dumps(v)) for k, t, v in items],
-        )
-        self.conn.commit()
 
     def get_summary_cache(self, source):
         """이미 저장된 활동들의 (timestamp, action, file_path) -> summary 매핑을 반환.

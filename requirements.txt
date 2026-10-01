@@ -13,3 +13,6 @@ langchain-core==1.6.5
 langchain-openai==1.6.6
 
 langgraph==1.2.12
+
+# VectorDB — 로컬 모드(서버 없이 data/qdrant 폴더에 저장)
+qdrant-client==1.19.1

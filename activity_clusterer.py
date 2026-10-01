@@ -5,8 +5,9 @@
 벡터화하고, 코사인 유사도로 같은 주제의 활동을 묶는다. LLM으로 클러스터별
 주제명을 붙여 "주제별 작업" 보고서 섹션을 생성.
 
-외부 VectorDB 없이 인메모리 코사인 유사도로 시작 (주간 활동 수백 건 규모에 충분).
-추후 활동 누적 시 FAISS/Qdrant로 교체 가능한 구조.
+임베딩은 VectorDB(Qdrant 로컬, vector_store.py)에 누적 저장해 재사용하고,
+같은 벡터를 RAG·STEP 3 의미 검색에도 쓴다. 주간 클러스터링 자체는 수백 건 규모라
+인메모리 코사인 유사도로 계산한다.
 """
 
 import json
@@ -17,6 +18,10 @@ import requests
 
 from database import ActivityDatabase
 from llm_summarizer import LLMSummarizer, PROMPT_TEMPLATES
+from vector_store import ActivityVectorStore
+
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "activities.db")
+_migrated = False
 
 EMBEDDING_MODEL = "azure/text-embedding-3-large"
 # 코사인 유사도가 이 값 이상이면 같은 주제로 묶는다 (0~1, 높을수록 엄격)
@@ -48,7 +53,7 @@ class ActivityClusterer:
 
     # ---------- 임베딩 ----------
 
-    def _embed(self, texts, batch_size=50):
+    def embed(self, texts, batch_size=50):
         """텍스트 목록을 임베딩 벡터로 변환. 실패 시 None."""
         if not texts:
             return []
@@ -105,16 +110,22 @@ class ActivityClusterer:
     # ---------- 클러스터링 ----------
 
     def _embed_with_cache(self, activities, texts):
-        """활동별 임베딩을 SQLite 캐시와 함께 조회.
+        """활동별 임베딩을 VectorDB에서 조회.
         저장된 벡터는 재사용하고 없는 것만 API 호출 → 주차를 거듭할수록
         누적돼 과거 활동과의 유사 검색(RAG) 기반이 된다."""
+        global _migrated
+        store = ActivityVectorStore()
         keys = [ActivityDatabase.activity_key(a) for a in activities]
         cached = {}
         try:
-            with ActivityDatabase() as db:
-                cached = db.get_embeddings(keys)
+            if not _migrated:
+                moved = store.migrate_from_sqlite(DB_PATH)
+                if moved:
+                    print(f"VectorDB: SQLite 임베딩 {moved}건 이전 완료")
+                _migrated = True
+            cached = store.get_vectors(keys)
         except Exception as e:
-            print(f"Warning: embedding cache read failed: {e}")
+            print(f"Warning: VectorDB read failed: {e}")
 
         vectors = [None] * len(activities)
         missing = []
@@ -126,18 +137,17 @@ class ActivityClusterer:
                 missing.append(i)
 
         if missing:
-            new_vecs = self._embed([texts[i] for i in missing])
+            new_vecs = self.embed([texts[i] for i in missing])
             if not new_vecs:
                 return None
             to_save = []
             for i, vec in zip(missing, new_vecs):
                 vectors[i] = vec
-                to_save.append((keys[i], texts[i], vec))
+                to_save.append((activities[i], texts[i], vec))
             try:
-                with ActivityDatabase() as db:
-                    db.save_embeddings(to_save)
+                store.upsert(to_save)
             except Exception as e:
-                print(f"Warning: embedding cache write failed: {e}")
+                print(f"Warning: VectorDB write failed: {e}")
         return vectors
 
     def cluster_activities(self, activities, threshold=SIMILARITY_THRESHOLD):
