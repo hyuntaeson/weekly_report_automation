@@ -70,7 +70,9 @@ class WeeklyReportPipeline:
         return {"activities": activities}
 
     def _analyze(self, state: ReportState) -> dict[str, Any]:
-        extras = self.gen.analyze_week_activities(state["activities"])
+        extras = self.gen.analyze_week_activities(
+            state["activities"], state["week_start"], state["week_end"]
+        )
         return {"extras": extras}
 
     def _aggregate(self, state: ReportState) -> dict[str, Any]:

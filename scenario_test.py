@@ -8,6 +8,7 @@
 
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -507,9 +508,11 @@ def t_word_report():
 
 
 def t_graph_pipeline():
+    # test_reports에 저장 — reports/의 이번 주 보고서(사용자가 편집한 파일)를 덮어쓰지 않도록
+    from report_pipeline import WeeklyReportPipeline
     from report_generator import ReportGenerator
     rg = ReportGenerator()
-    result = rg.generate_and_save_weekly_report(formats=("markdown",))
+    result = WeeklyReportPipeline(rg, output_dir="test_reports").run(formats=("markdown",))
     paths = result["file_paths"]
     if "markdown" not in paths or not os.path.exists(paths["markdown"]):
         return fail("마크다운 경로 없음")
@@ -590,6 +593,77 @@ def t_expected_questioner_settings():
     return ok("추가·공백정리·중복/빈값 거부·삭제 정상")
 
 
+def t_rag_topic_settings():
+    """Settings > 보고서 설정 주제 질의 추가·중복·삭제·검색 범위 (실제 설정 파일은 저장하지 않음)"""
+    from types import SimpleNamespace
+    from modern_gui import WeeklyPulseApp
+    app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+    app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None)
+    app.show_snack = lambda msg: None
+    app._save_report_settings = lambda: None
+    app._create_report_settings_section()
+    app.report_settings["rag_topics"] = ["장애 대응"]
+    for text in (" 손익·예산 ", "장애 대응", "  "):
+        app.rag_topic_input.value = text
+        app._add_rag_topic(None)
+    app._remove_rag_topic("장애 대응")
+    app._rag_past_weeks_changed("abc")
+    app._rag_past_weeks_changed("6")
+    topics = app.report_settings["rag_topics"]
+    if topics != ["손익·예산"] or len(app.rag_topic_chips.controls) != 1:
+        return fail(f"결과 불일치: {topics}")
+    if app.report_settings["rag_past_weeks"] != 6:
+        return fail(f"검색 범위 불일치: {app.report_settings['rag_past_weeks']}")
+    return ok("주제 추가·중복/빈값 거부·삭제, 검색 범위 숫자 검증 정상")
+
+
+def t_rag_citation_check():
+    """RAG 출력 검증: 인용 없는 문장·없는 근거 번호 문장 제거, 인용 과다 축약, NONE 처리"""
+    from rag import parse_cited_bullets
+    output = (
+        "- 거래저장 실패 장애를 복구함 [1][2]\n"
+        "- 근거 없는 추측 문장\n"
+        "- 존재하지 않는 근거를 단 문장 [9]\n"
+        "서론 문장 [1]\n"
+        "- 근거를 많이 단 문장 [1][2][3][4]\n"
+        "- (지난 기록) 지난달 점검과 이어짐 [3]"
+    )
+    bullets = parse_cited_bullets(output, evidence_count=4)
+    texts = [t for t, _ in bullets]
+    if len(bullets) != 3 or bullets[1][1] != [1, 2, 3] or "[4]" in texts[1]:
+        return fail(f"검증 결과 불일치: {bullets}")
+    if parse_cited_bullets("NONE", 3) != [] or parse_cited_bullets("", 3) != []:
+        return fail("NONE/빈 출력 처리 실패")
+    return ok("근거 없는 문장 2건 제거, 인용 4개→3개 축약, NONE 처리 정상")
+
+
+def t_rag_sections():
+    """실데이터 RAG: 이번 주 활동 → 주제별 근거 인용 요약 → Markdown 'STEP 2 주제 질의 요약'"""
+    from report_generator import ReportGenerator
+    from rag import TopicQueryRAG
+    rg = ReportGenerator()
+    week_start, week_end = rg._resolve_week_range(None, None)
+    acts = rg.fetch_week_activities(week_start, week_end)
+    rag = TopicQueryRAG(rg)
+    if not rag.enabled:
+        return skip("LiteLLM 설정 없음")
+    if not acts:
+        return skip("이번 주 활동 없음")
+    sections = rag.build_sections(acts, week_start, week_end)
+    if not sections:
+        return skip("설정한 주제와 관련된 이번 주 기록 없음")
+    for s in sections:
+        numbers = {e["n"] for e in s["evidence"]}
+        cited = {int(n) for b in s["bullets"] for n in re.findall(r"\[(\d+)\]", b)}
+        if not s["bullets"] or not cited or not cited <= numbers:
+            return fail(f"[{s['topic']}] 인용·근거 번호 불일치: {cited} / {numbers}")
+    data = rg.compose_weekly_data(week_start, week_end, acts, {"rag_sections": sections})
+    md = rg.generate_markdown(data)
+    if "### 주제 질의 요약" not in md or md.index("### 주제 질의 요약") < md.index("## STEP 2"):
+        return fail("Markdown STEP 2에 주제 질의 요약 없음")
+    return ok(f"{len(sections)}개 주제 — " + ", ".join(s["topic"] for s in sections))
+
+
 # ───────────────────────── 실행 ─────────────────────────
 
 TESTS = [
@@ -626,6 +700,8 @@ TESTS = [
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
     ("AI-03", "AI 분석", "LangChain/LangGraph 임포트", t_langchain_present),
+    ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
+    ("AI-05", "AI 분석", "RAG 주제 질의 섹션 (실데이터)", t_rag_sections),
 
     ("RPT-01", "보고서 생성", "Markdown 섹션 완전성", t_markdown_report),
     ("RPT-02", "보고서 생성", "Word(docx) 생성", t_word_report),
@@ -637,6 +713,7 @@ TESTS = [
     ("GUI-02", "GUI·실행", "프로세스 감지", t_process_detect),
     ("GUI-03", "GUI·실행", "통합 수집기 임포트", t_integrated_collector),
     ("GUI-04", "GUI·실행", "예상질문자 설정 (추가·삭제)", t_expected_questioner_settings),
+    ("GUI-05", "GUI·실행", "주제 질의 설정 (추가·삭제)", t_rag_topic_settings),
 ]
 
 if __name__ == "__main__":

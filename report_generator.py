@@ -72,14 +72,16 @@ class ReportGenerator:
         settings, me_name = self._teams_context()
         return _build_sections(activities, me_name=me_name, teams_settings=settings)
 
-    def analyze_week_activities(self, activities):
-        """LLM/임베딩이 필요한 분석 단계 (LangGraph analyze 노드와 공유)."""
+    def analyze_week_activities(self, activities, week_start=None, week_end=None):
+        """LLM/임베딩이 필요한 분석 단계 (LangGraph analyze 노드와 공유).
+        week_start/end가 있으면 RAG 주제 질의 섹션도 만든다 (지난 기록 검색 기준)."""
         _, me_name = self._teams_context()
         # 파트원만 수정한 공유 문서는 내 업무가 아니므로 주제 분석에서 제외
         my_activities = [a for a in activities if is_my_work(a, me_name)]
         return {
             "teams_my": self._summarize_my_teams_messages(activities),
             "topics": self._cluster_topics(my_activities),
+            "rag_sections": self._rag_sections(activities, week_start, week_end),
             "week_summary": self._summarize_week(
                 self.build_program_sections(activities)
             ),
@@ -119,6 +121,7 @@ class ReportGenerator:
                 r"(?m)^#{1,6}\s*(.+?)\s*$", r"**\1**", teams_my["summary"] or ""
             ),
             "topics": extras.get("topics") or [],
+            "rag_sections": extras.get("rag_sections") or [],
         }
 
     def collect_weekly_data(self, week_start=None, week_end=None):
@@ -130,7 +133,9 @@ class ReportGenerator:
         activities = self.fetch_week_activities(
             resolved_week_start, resolved_week_end
         )
-        extras = self.analyze_week_activities(activities)
+        extras = self.analyze_week_activities(
+            activities, resolved_week_start, resolved_week_end
+        )
         return self.compose_weekly_data(
             resolved_week_start, resolved_week_end, activities, extras
         )
@@ -182,6 +187,16 @@ class ReportGenerator:
                     if topic.get("examples"):
                         line += ": " + ", ".join(topic["examples"])
                     para(document, line, indent=0.4)
+
+            for rag in weekly_data.get("rag_sections") or []:
+                if rag is weekly_data["rag_sections"][0]:
+                    para(document, "주제 질의 요약", size=12, bold=True, space_before=6)
+                para(document, rag["topic"], bold=True, indent=0.4, space_before=4)
+                for bullet in rag["bullets"]:
+                    para(document, f"• {bullet}", indent=0.8)
+                para(document, "근거: " + " · ".join(
+                    f"[{e['n']}]{'(지난)' if e['past'] else ''} {e['label']}" for e in rag["evidence"]
+                ), size=9, italic=True, indent=0.8)
 
             if weekly_data.get("teams_my_summary"):
                 para(document, "Teams 메시지 요약", size=12, bold=True, space_before=6)
@@ -499,6 +514,19 @@ class ReportGenerator:
             return clusterer.build_topics(activities)
         except Exception as e:
             print(f"Warning: topic clustering failed: {e}")
+            return []
+
+    def _rag_sections(self, activities, week_start, week_end):
+        """Settings의 주제별로 VectorDB 검색 → 근거 인용 요약 (rag.py).
+        기간을 모르거나 LiteLLM 설정이 없거나 실패하면 빈 리스트 (섹션 생략)."""
+        if not week_start or not week_end:
+            return []
+        try:
+            from rag import TopicQueryRAG
+            rag = TopicQueryRAG(self, str(self.base_dir / "config" / "litellm_config.json"))
+            return rag.build_sections(activities, week_start, week_end)
+        except Exception as e:
+            print(f"Warning: topic query (RAG) failed: {e}")
             return []
 
     def _dedupe_meetings(self, activities):

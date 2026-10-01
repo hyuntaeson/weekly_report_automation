@@ -150,6 +150,10 @@ class ActivityClusterer:
                 print(f"Warning: VectorDB write failed: {e}")
         return vectors
 
+    def embed_activities(self, activities):
+        """활동들이 VectorDB에 들어 있도록 보장 (없는 것만 임베딩·저장). 실패 시 None."""
+        return self._embed_with_cache(activities, [self._activity_text(a) for a in activities])
+
     def cluster_activities(self, activities, threshold=SIMILARITY_THRESHOLD):
         """활동 목록을 의미 유사도로 클러스터링.
         반환: [{"items": [activity...], "centroid": vec}, ...] 건수 내림차순.

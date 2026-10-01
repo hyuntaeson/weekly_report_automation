@@ -112,6 +112,17 @@ class ActivityVectorStore:
         """의미가 가까운 활동 검색. 날짜는 'YYYY-MM-DD'(로컬, 양끝 포함).
         sender_contains: Teams 표시 이름 일부 (예: '김영호') — 해당 발신자 메시지만.
         반환: [{"score", **payload}] 유사도 내림차순."""
+        with self._client() as client:
+            return self._query(client, vector, limit, date_from, date_to, sources, sender_contains, min_score)
+
+    def search_many(self, requests):
+        """여러 검색을 저장소를 한 번만 열어 처리 (열 때마다 전체 벡터를 읽어서 비쌈).
+        requests: [{"vector": ..., 그 외 search()와 같은 인자}] → 결과 목록을 같은 순서로."""
+        with self._client() as client:
+            return [self._query(client, **r) for r in requests]
+
+    def _query(self, client, vector, limit=10, date_from=None, date_to=None, sources=None,
+               sender_contains=None, min_score=0.0):
         must = []
         if date_from or date_to:
             # Range는 숫자 전용 → 로컬 날짜를 epoch(ts)로 바꿔 거른다 (끝 날짜는 그날 끝까지)
@@ -123,11 +134,10 @@ class ActivityVectorStore:
             must.append(FieldCondition(key="source", match=MatchAny(any=list(sources))))
         # 발신자 부분 일치는 로컬 모드 전문 검색 인덱스 없이 후처리로 거른다
         fetch = limit * 5 if sender_contains else limit
-        with self._client() as client:
-            result = client.query_points(
-                self.collection, query=vector, limit=fetch,
-                query_filter=Filter(must=must) if must else None, with_payload=True,
-            )
+        result = client.query_points(
+            self.collection, query=vector, limit=fetch,
+            query_filter=Filter(must=must) if must else None, with_payload=True,
+        )
         hits = []
         for p in result.points:
             if p.score < min_score:

@@ -55,6 +55,19 @@
 
 {% endfor %}
 {% endif %}
+{% if rag_sections %}
+
+### 주제 질의 요약
+{% for r in rag_sections %}
+
+#### {{ r.topic }}
+{% for b in r.bullets %}
+- {{ b }}
+{% endfor %}
+
+<sub>근거: {% for e in r.evidence %}[{{ e.n }}]{% if e.past %}(지난){% endif %} {{ e.label }}{% if not loop.last %} · {% endif %}{% endfor %}</sub>
+{% endfor %}
+{% endif %}
 {% if teams_my_summary %}
 
 ### Teams 메시지 요약
