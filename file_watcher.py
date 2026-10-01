@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import office_reader
 from database import ActivityDatabase
 from llm_summarizer import LLMSummarizer
 
@@ -142,7 +143,7 @@ class FileActivityHandler(FileSystemEventHandler):
         if not added_lines:
             return None
         added = joiner.join(added_lines)
-        summary = self.summarizer.summarize(added, template="file") or added[:300]
+        summary = self.summarizer.summarize(added, max_len=500, template="file") or added[:500]
         return {'content_added': added[:2000], 'summary': summary}
 
     _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -168,100 +169,22 @@ class FileActivityHandler(FileSystemEventHandler):
             'summary': '(내용 변경 감지됨 - 사내 보안 정책으로 암호화되어 상세 내용 확인 불가)',
         }
 
-    # --- Windows Office COM 폴백 (DRM/OLE2 파일 읽기) ---
-
-    def _open_office_com(self, prog):
-        """Windows Office COM 앱 인스턴스 반환. 비Windows/미설치 시 None."""
-        if sys.platform != "win32":
-            return None
-        try:
-            import win32com.client
-            app = win32com.client.Dispatch(f"{prog}.Application")
-            for attr, val in (("Visible", False), ("DisplayAlerts", False)):
-                try:
-                    setattr(app, attr, val)
-                except Exception:
-                    pass
-            return app
-        except Exception:
-            return None
+    # --- Windows Office COM 폴백 (DRM/OLE2 파일 읽기, office_reader 공용) ---
 
     def _excel_snapshot_via_com(self, file_path):
-        """OLE2로 재암호화된 xlsx를 Excel COM으로 열어 openpyxl과 동일한
-        스냅샷 dict 반환. Excel이 자체 권한으로 복호화하므로 라벨 해제
-        없이 내용이 읽힘. 실패 시 None."""
-        app = self._open_office_com("Excel")
-        if app is None:
-            return None
-        try:
-            wb = app.Workbooks.Open(file_path, ReadOnly=True)
-            snapshot = {}
-            for ws in wb.Worksheets:
-                rows = []
-                for row in ws.UsedRange.Rows:
-                    vals = tuple(c.Value for c in row.Cells)
-                    if any(v is not None and str(v).strip() for v in vals):
-                        rows.append(vals)
-                snapshot[ws.Name] = rows
-            wb.Close(False)
-            return snapshot
-        except Exception:
-            return None
-        finally:
-            try:
-                app.Quit()
-            except Exception:
-                pass
+        """OLE2로 재암호화된 xlsx를 Excel COM으로 읽은 {시트: [행]} 스냅샷. 실패 시 None."""
+        with office_reader.office_app("Excel") as app:
+            return office_reader.excel_snapshot(app, file_path) if app else None
 
     def _word_paragraphs_via_com(self, file_path):
         """OLE2 docx를 Word COM으로 열어 문단 텍스트 리스트 반환."""
-        app = self._open_office_com("Word")
-        if app is None:
-            return None
-        try:
-            doc = app.Documents.Open(file_path, ReadOnly=True)
-            paras = [p.Range.Text.strip() for p in doc.Paragraphs
-                     if p.Range.Text.strip()]
-            doc.Close(False)
-            return paras
-        except Exception:
-            return None
-        finally:
-            try:
-                app.Quit()
-            except Exception:
-                pass
+        with office_reader.office_app("Word") as app:
+            return office_reader.word_paragraphs(app, file_path) if app else None
 
     def _ppt_lines_via_com(self, file_path):
         """OLE2 pptx를 PowerPoint COM으로 열어 슬라이드 텍스트 리스트 반환."""
-        app = self._open_office_com("PowerPoint")
-        if app is None:
-            return None
-        try:
-            pres = app.Presentations.Open(file_path, ReadOnly=True,
-                                          WithWindow=False)
-            lines = []
-            for slide_number, slide in enumerate(pres.Slides, start=1):
-                texts = []
-                for shape in slide.Shapes:
-                    try:
-                        if shape.HasTextFrame and shape.TextFrame.HasText:
-                            text = shape.TextFrame.TextRange.Text.strip()
-                            if text:
-                                texts.append(text)
-                    except Exception:
-                        continue
-                if texts:
-                    lines.append(f"[슬라이드 {slide_number}] " + " / ".join(texts))
-            pres.Close()
-            return lines
-        except Exception:
-            return None
-        finally:
-            try:
-                app.Quit()
-            except Exception:
-                pass
+        with office_reader.office_app("PowerPoint") as app:
+            return office_reader.ppt_lines(app, file_path) if app else None
 
     def _capture_word_content(self, file_path):
         """Word(.docx) 파일에서 새로 추가/변경된 문단을 캡처.
@@ -391,7 +314,7 @@ class FileActivityHandler(FileSystemEventHandler):
         if not added:
             return None
 
-        summary = self.summarizer.summarize(added, template="file") or added[:300]
+        summary = self.summarizer.summarize(added, max_len=500, template="file") or added[:500]
         return {'content_added': added[:2000], 'summary': summary}
 
     def log_activity(self, action, file_path, details=None):

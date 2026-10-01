@@ -241,6 +241,23 @@ class ActivityDatabase:
                 cache[(row["timestamp"], row["action"], row["file_path"])] = summary
         return cache
 
+    def get_details_cache(self, source, marker_key):
+        """(timestamp, file_path) → details. details에 marker_key가 있는 행만.
+        버전·스냅샷 비교처럼 비싼 요약을 재수집 때 재사용하기 위함."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT timestamp, file_path, details FROM activities "
+            "WHERE source = ? AND details LIKE ?",
+            (source, f'%"{marker_key}"%'),
+        )
+        cache = {}
+        for row in cursor.fetchall():
+            try:
+                cache[(row["timestamp"], row["file_path"])] = json.loads(row["details"])
+            except (TypeError, ValueError):
+                continue
+        return cache
+
     def get_activities_by_date_range(self, start_date, end_date):
         """Get activities within a date range"""
         cursor = self.conn.cursor()

@@ -5,11 +5,18 @@ Collects Claude Code session activity and metadata
 """
 
 import glob
+import hashlib
 import json
 import os
+import re
 from datetime import datetime, timedelta
 
 from database import ActivityDatabase
+
+
+def hash_text(parts):
+    """요청 묶음이 바뀌었는지 판단하는 캐시 키 (내용 기반, 실행마다 동일)."""
+    return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 class AIToolCollector:
@@ -36,7 +43,87 @@ class AIToolCollector:
         devin_activities = self.collect_devin_activity()
         all_activities.extend(devin_activities)
 
+        all_activities.extend(self.collect_work_summaries(hours=hours))
+
         return all_activities
+
+    WORK_SUMMARY_VERSION = 8  # 프롬프트를 바꾸면 올린다 → 캐시된 요약 재생성
+
+    def collect_work_summaries(self, hours=24 * 7):
+        """Claude Code 요청 기록을 프로젝트·날짜별로 묶어 '무슨 작업을 했는지' LLM 요약.
+        같은 요청 묶음(prompts_key)이면 DB에 저장된 요약을 재사용한다."""
+        history_path = os.path.expanduser("~/.claude/history.jsonl")
+        if not os.path.exists(history_path):
+            return []
+        cutoff = datetime.now() - timedelta(hours=hours)
+        groups = {}
+        with open(history_path, "r", encoding="utf-8") as history_file:
+            for line in history_file:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                at = self._parse_datetime(entry.get("timestamp"))
+                prompt = re.sub(r"\[Pasted text #\d+[^\]]*\]", "", entry.get("display") or "").strip()
+                if at is None or at < cutoff or not prompt or prompt.startswith("/"):
+                    continue
+                key = (entry.get("project") or "unknown", at.date())
+                groups.setdefault(key, []).append(prompt[:500])
+
+        try:
+            with ActivityDatabase(self.db_path) as db:
+                cache = db.get_details_cache("claude_code", "prompts_key")
+        except Exception:
+            cache = {}
+
+        activities = []
+        for (project, day), prompts in sorted(groups.items(), key=lambda kv: kv[0][1]):
+            timestamp = f"{day.isoformat()}T23:59:59"
+            prompts_key = f"{self.WORK_SUMMARY_VERSION}:{len(prompts)}:{hash_text(prompts)}"
+            cached = cache.get((timestamp, project))
+            if cached and cached.get("prompts_key") == prompts_key:
+                details = cached
+            else:
+                summary = self._summarize_prompts(prompts)
+                details = {"prompt_count": len(prompts), "summary": summary}
+                if summary:  # 요약 실패 시 캐시 키를 남기지 않아 다음 수집 때 재시도
+                    details["prompts_key"] = prompts_key
+            activities.append({
+                "timestamp": timestamp,
+                "action": "work_summary",
+                "file_path": project,
+                "file_type": "claude_session",
+                "source": "claude_code",
+                "details": details,
+            })
+        return activities
+
+    @staticmethod
+    def _summarize_prompts(prompts):
+        # 요청 원문이 "~해줘" 같은 지시문이라, 태그로 감싸 요약 대상 '데이터'임을 분명히 한다
+        # (안 그러면 모델이 그 지시에 직접 답하려 든다)
+        text = "<requests>\n" + "\n".join(f"- {p}" for p in prompts) + "\n</requests>"
+        try:
+            from llm_summarizer import PROMPT_TEMPLATES, LLMSummarizer
+            summary = LLMSummarizer().complete(
+                PROMPT_TEMPLATES["work"], text, max_tokens=1000, max_input=8000, temperature=0
+            ) or ""
+        except Exception:
+            return ""
+        # 그래도 "이해했습니다. 정리하면:" 같은 서두나 "~ 제공해주시면 작업하겠습니다" 같은
+        # 꼬리 문장이 붙으면 번호 목록 부분만 남긴다
+        first = re.search(r"(?m)^\s*1[.)]\s", summary)
+        if not first:
+            # 번호 목록이 없으면 거절·되묻기 응답 → 실패 처리 (캐시 안 되고 다음 수집 때 재시도)
+            return ""
+        if re.search(r"제공해\s*주|알려\s*주시|확인할 수 없|필요한 정보|요약하지 않", summary):
+            return ""  # 목록 형태의 되묻기 응답도 실패 처리
+        kept = []
+        for line in summary[first.start():].splitlines():
+            if line.strip() and not re.match(r"\s*(\d+[.)]|[-*•])\s|\s{2,}\S", line):
+                break  # 목록이 끝난 뒤의 일반 문단
+            kept.append(line)
+        return "\n".join(kept).strip()
 
     def collect_claude_history(self, hours=24):
         """Collect Claude Code interaction history from JSONL log"""
