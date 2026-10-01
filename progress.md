@@ -180,6 +180,15 @@
 - 실데이터(09/24~09/30): 장애 대응·배포·테스트·결제 연동·교육·역량 개발 4개 섹션, 약 20초
 - 시나리오 테스트: AI-04(근거 인용 검증)·AI-05(실데이터 RAG)·GUI-05(주제 설정) 추가, RPT-03이 `reports/` 대신 `test_reports/`에 저장하도록 수정 — 41 PASS / SKIP 1(Outlook)
 
+### 24. 프로젝트 구조 정리 (2026-10-01)
+- 루트의 파이썬 파일 28개 → `weekly_report/` 패키지: `collectors/`(수집 11개) · `storage/`(database, vector_store) · `ai/`(llm_summarizer, clusterer, rag) · `report/`(sections, generator, pipeline, templates/) · `common/`(office_reader, timeutil) · `gui/` (decisions.md 42)
+- `weekly_report/paths.py`: config·data·reports·templates 경로를 루트 기준 절대 경로로 일원화 → 어느 폴더에서 실행해도 같은 설정·DB 사용 (`/`에서 실행해 확인)
+- GUI 1551줄 → 화면별 mixin 7개 (app·dashboard·watch_settings·teams_settings·report_settings·actions·widgets), 클래스는 `WeeklyPulseApp` 그대로
+- `to_local_datetime`을 `common/timeutil.py`로 이동 (storage가 report를 import하던 역방향 의존 제거)
+- 테스트 → `tests/`(구버전은 `tests/legacy/`), 유틸 → `scripts/`, 발표자료 → `docs/`, 확장 안내 → `browser_extension/README.md`, 구 tkinter GUI·UI 시안·`EXPECTED_Ui.jpg` 등 → `archive/legacy/`
+- 실행: `run_modern_gui.bat` 또는 `python -m weekly_report`. README 구조·실행 방법, AGENTS.md 코드 구조 규칙(루트에 .py 금지, paths 상수만 사용) 갱신
+- 검증: 시나리오 테스트 40 PASS / SKIP 2(Outlook, 브라우저 서버 — GUI 미실행). GUI를 새 경로로 띄워 5757 서버 기동·COL-03 PASS 확인 → 정리 전과 같은 결과
+
 ### 알려진 잔여 이슈
 - ~~`.docx`/`.pptx` DRM fallback 미작동~~ → **해소**: OLE2 매직바이트로 판별 후 COM 읽기 (`file_watcher._is_ole2`)
 - **DRM 내용 추출**: Windows + Office 환경은 COM으로 동작. macOS는 수정 이벤트만 기록 — 사내 DevX `DocumentLoader.yaml` 워크플로우 검증 여지

@@ -21,9 +21,18 @@
 - 보고서 출력 포맷은 Markdown + Word — 사용자가 PDF/HTML은 명시적으로 제외함
 - Teams 수집은 Microsoft Office first-party client + 디바이스 코드 로그인 방식 유지 (Azure AD 앱 등록 불가)
 
+## 코드 구조
+
+- 소스는 `weekly_report/` 패키지 안에 역할별로 둔다: `collectors/`(수집) · `storage/`(DB·VectorDB) · `ai/`(LLM·임베딩·RAG) · `report/`(섹션·생성·파이프라인·템플릿) · `common/`(공용 유틸) · `gui/`(화면별 mixin)
+- 루트에 새 `.py`를 만들지 않는다. 테스트는 `tests/`, 일회성 유틸은 `scripts/`
+- import는 `from weekly_report.<패키지>.<모듈> import ...` 절대 경로
+- 파일 경로는 `weekly_report/paths.py` 상수만 사용 — 실행 폴더 기준 상대 경로(`"config/..."`) 금지
+- GUI 새 화면/섹션은 `gui/`에 mixin 모듈로 추가하고 `WeeklyPulseApp` 상속 목록에 넣는다
+
 ## 검증
 
-- 기능 테스트: `python scenario_test.py` (32건, 결과는 `test_reports/*.xlsx`)
-- 구버전 통합 테스트: `python test_all_completed.py`
+- 기능 테스트: `python tests/scenario_test.py` (42건, 결과는 `test_reports/*.xlsx`)
+- 구버전 통합 테스트: `python tests/legacy/test_all_completed.py`
+- 테스트에서 보고서를 만들 때는 `output_dir="test_reports"` 지정 — `reports/`에 쓰지 않는다
 - 임시 스크립트는 `_tmp_*.py`로 만들고 작업 후 삭제. 남기려면 tests/ 개념으로 정리
-- `data/`의 테스트 산출물은 `python cleanup_data.py --yes`로 정리
+- `data/`의 테스트 산출물은 `python scripts/cleanup_data.py --yes`로 정리

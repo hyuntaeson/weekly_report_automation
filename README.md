@@ -34,7 +34,7 @@
 - [x] AI 의미 분석: 임베딩 클러스터링으로 주간 활동을 주제 단위로 자동 분류 (주제별 작업 섹션)
 - [x] 임베딩 영속 저장: `activity_embeddings` 테이블로 벡터 누적 — 재실행 시 캐시 재사용
 - [x] 보고서 생성 LangGraph 파이프라인 (collect→filter→analyze→aggregate→output 노드화)
-- [x] 전체 기능 시나리오 테스트 — Excel 결과 자동 생성 (`scenario_test.py`)
+- [x] 전체 기능 시나리오 테스트 — Excel 결과 자동 생성 (`tests/scenario_test.py`)
 - [x] GUI 자동 추적 시작 + 시작 시간 최적화 (~10s→~2s)
 - [x] Teams 수집/보고 기준 사용자 설정 (기간·채팅유형·제외 채팅방·업무만 요약)
 - [x] SharePoint/OneDrive 파일 수정 이력 수집 (동일 Graph 토큰 재사용)
@@ -90,55 +90,65 @@
 
 ```
 weekly_report_automation/
-├── modern_gui.py                # WeeklyPulse 스타일 현대적 UI
-├── gui_watcher.py                # Classic tkinter 기반 GUI
-├── file_watcher.py               # 파일 시스템 감시 프로그램
-├── database.py                   # SQLite 데이터베이스 관리
-├── ide_collector.py              # IDE 활동 수집 (VSCode, Orca)
-├── outlook_collector.py          # Outlook 활동 수집
-├── slack_collector.py            # Slack 활동 수집
-├── ai_tool_collector.py          # AI 툴(Claude Code) 활동 수집
-├── confluence_collector.py       # Confluence 페이지 활동 수집 (AI 요약 포함)
-├── teams_collector.py            # Teams 활동 수집 (Graph API, config 없으면 스텁)
-├── onenote_collector.py          # OneNote 활동 수집 (Graph API — 섹션 수준)
-├── sharepoint_collector.py       # SharePoint/OneDrive 파일 수정 수집 (Graph API)
-├── llm_summarizer.py             # 사내 LiteLLM Proxy 기반 텍스트 요약기 (LCEL 체인)
-├── activity_clusterer.py         # 임베딩 의미 클러스터링 → 보고서 "주제별 작업"
-├── report_pipeline.py            # 보고서 생성 LangGraph 파이프라인
-├── report_generator.py           # 주간보고서 생성 (Markdown+Word, 액션별 상세 내역)
-├── browser_activity_server.py    # 브라우저 확장 수신용 로컬 HTTP 서버
-├── integrated_collector.py       # 통합 수집 시스템
-├── test_all_completed.py         # 통합 테스트 프로그램 (9개 기능)
-├── scenario_test.py              # 전체 기능 시나리오 테스트 (32건 → Excel 결과)
-├── cleanup_data.py               # data/ 테스트 산출물 정리 유틸리티
-├── check_database.py             # 데이터베이스 확인 프로그램
-├── weekly_report_automation_overview.html  # Spharos 스타일 프로젝트 개요 보고서
-├── requirements.txt              # 필요한 라이브러리
-├── run_modern_gui.bat            # Modern UI 실행 스크립트
-├── run_gui.bat                   # Classic UI 실행 스크립트
-├── .gitignore                    # config 토큰 파일, data/, reports/, logs/ 등 제외
-├── templates/
-│   ├── weekly_report.md.j2       # 보고서 Markdown 템플릿
-│   └── blank_report_template.docx # python-docx용 빈 템플릿
-├── browser_extension/            # Chrome MV3 확장
-│   ├── manifest.json
-│   ├── background.js
-│   ├── popup.html / popup.js
-│   └── icons/ (16/48/128px)
-├── config/
-│   ├── watch_config.json         # 감시 설정 파일 (감시 폴더 목록)
+├── weekly_report/                # 소스 패키지 (python -m weekly_report → GUI 실행)
+│   ├── paths.py                  # config/·data/·reports/ 등 경로를 한 곳에서 관리 (루트 기준 절대 경로)
+│   ├── collectors/               # 데이터 수집기
+│   │   ├── file_watcher.py       # 파일 시스템 실시간 감시 + Office 내용 캡처
+│   │   ├── browser_server.py     # 브라우저 확장 수신용 로컬 HTTP 서버 (5757)
+│   │   ├── ide.py                # IDE 활동 (VSCode Local History, Orca)
+│   │   ├── ai_tool.py            # Claude Code 요청 기록 + 작업 요약
+│   │   ├── outlook.py            # Outlook 메일·일정 (Graph/COM)
+│   │   ├── teams.py              # Teams 채팅·일정 (Graph, 디바이스 코드 로그인)
+│   │   ├── onenote.py            # OneNote 노트북·섹션 변경 (Graph)
+│   │   ├── sharepoint.py         # SharePoint/OneDrive 수정 파일 + 버전 비교 (Graph)
+│   │   ├── confluence.py         # Confluence 페이지 (AI 요약)
+│   │   ├── slack.py              # Slack (토큰 승인 대기)
+│   │   └── integrated.py         # 통합 수집기 (상시 감시 + 보고서 직전 1회 수집)
+│   ├── storage/
+│   │   ├── database.py           # SQLite 활동 DB (upsert, 요약 캐시)
+│   │   └── vector_store.py       # Qdrant 로컬 VectorDB (활동 임베딩 + 메타데이터 필터 검색)
+│   ├── ai/
+│   │   ├── llm_summarizer.py     # 사내 LiteLLM Proxy 요약기 (LCEL 체인, 소스별 프롬프트)
+│   │   ├── clusterer.py          # 임베딩 의미 클러스터링 → "주제별 작업"
+│   │   └── rag.py                # RAG 주제 질의 → "주제 질의 요약" (근거 인용 검증)
+│   ├── report/
+│   │   ├── sections.py           # STEP 1 프로그램별·항목별 섹션 빌더
+│   │   ├── generator.py          # 주간보고서 생성 (Markdown + Word)
+│   │   ├── pipeline.py           # LangGraph 파이프라인 (collect→filter→analyze→aggregate→output)
+│   │   └── templates/            # weekly_report.md.j2, blank_report_template.docx
+│   ├── common/
+│   │   ├── office_reader.py      # DRM 문서용 Office COM 리더
+│   │   └── timeutil.py           # 수집기별 timestamp → 로컬 시각 통일
+│   └── gui/                      # Flet GUI (WeeklyPulseApp = 화면별 mixin 조합)
+│       ├── app.py                # 창·사이드바·화면 전환, main()
+│       ├── dashboard.py          # 대시보드 (앱 감지·통계·보고서 생성 버튼)
+│       ├── watch_settings.py     # Settings 뼈대 + 감시 폴더
+│       ├── teams_settings.py     # Settings > Teams 수집·보고 설정
+│       ├── report_settings.py    # Settings > 보고서 설정 (RAG 주제 질의)
+│       ├── actions.py            # 추적·수집·보고서 생성 동작
+│       └── widgets.py            # 공용 컨트롤
+├── tests/
+│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (42건 → test_reports/*.xlsx)
+│   └── legacy/                   # 구버전 테스트 (test_all_completed 등)
+├── scripts/
+│   ├── cleanup_data.py           # data/ 테스트 산출물 정리
+│   └── check_database.py         # DB 내용 확인
+├── docs/
+│   └── weekly_report_automation_overview.html  # 킥오프 발표자료
+├── browser_extension/            # Chrome MV3 확장 (README.md = 설치 안내)
+├── config/                       # 설정 (토큰·API 키 파일은 gitignore)
+│   ├── watch_config.json         # 감시 폴더 목록
 │   ├── teams_settings.json       # Teams 수집/보고 설정 (Settings 화면에서 저장)
-│   ├── slack_config.json         # Slack 설정 파일 (gitignore 처리됨)
-│   ├── confluence_config.json    # Confluence 설정 파일 (토큰 포함, gitignore 처리됨)
-│   └── litellm_config.json       # 사내 LiteLLM Proxy 설정 (API 키 포함, gitignore 처리됨)
-├── reports/                      # 생성된 주간보고서 저장 위치
-├── test_reports/                 # 시나리오 테스트 결과 (Excel, gitignore 처리됨)
-├── logs/                         # 로그 파일 저장소
-├── data/                         # 데이터베이스 및 JSON 파일 저장소
-├── README.md                     # 이 파일
-├── decisions.md                  # 핵심 결정 사항
-├── progress.md                   # 최근 작업 내역과 다음 할 일
-└── archive/                      # 완료된 작업 로그, 조사 결과, 이전 계획
+│   ├── report_settings.json      # 보고서 설정 — RAG 주제 (Settings 화면에서 저장)
+│   ├── slack_config.json / confluence_config.json / litellm_config.json / teams_graph_token.json
+├── data/                         # activities.db, qdrant/, 캐시 (gitignore)
+├── reports/                      # 생성된 주간보고서 (gitignore)
+├── test_reports/                 # 테스트 결과·테스트용 보고서 (gitignore)
+├── logs/                         # 로그 (gitignore)
+├── archive/                      # 완료된 작업 로그, legacy/ (구 tkinter GUI·UI 시안 등)
+├── run_modern_gui.bat            # GUI 실행 (pythonw -m weekly_report)
+├── requirements.txt
+├── README.md · AGENTS.md · PROJECT_STATUS.md · progress.md · decisions.md
 ```
 
 ## 🚀 설치 및 실행
@@ -149,31 +159,24 @@ pip install -r requirements.txt
 ```
 
 ### 2. GUI 프로그램 실행 (권장)
-
-**Modern UI (WeeklyPulse 스타일):**
 ```bash
 run_modern_gui.bat
-# 또는
-python modern_gui.py
+# 또는 (콘솔 로그 확인)
+python -m weekly_report
 ```
 
-**Classic UI (tkinter 기반):**
+### 3. 통합 수집 시스템 실행 (GUI 없이)
 ```bash
-python gui_watcher.py
-```
-
-### 3. 통합 수집 시스템 실행
-```bash
-python integrated_collector.py
+python -m weekly_report.collectors.integrated
 ```
 
 ### 4. 전체 기능 테스트
 ```bash
-python test_all_completed.py
+python tests/scenario_test.py
 ```
 
 ### 5. 브라우저 확장 설치
-`README_BROWSER_EXTENSION.md` 참고 (chrome://extensions → 개발자 모드 → browser_extension 폴더 로드)
+`browser_extension/README.md` 참고 (chrome://extensions → 개발자 모드 → browser_extension 폴더 로드)
 
 ## 📊 데이터베이스 구조
 
@@ -201,7 +204,7 @@ python test_all_completed.py
 각 사용자가 본인 PC에서 1회만 수행하면 되는 설정:
 
 1. `pip install -r requirements.txt`
-2. **Teams 로그인**: `python teams_collector.py --login` 실행 → 화면에 표시되는 코드를 https://login.microsoft.com/device 에 입력 (본인 회사 MS 계정). 완료되면 `config/teams_graph_token.json`이 생성되고, 이후에는 refresh_token으로 자동 갱신되어 재로그인 불필요
+2. **Teams 로그인**: `python -m weekly_report.collectors.teams --login` 실행 → 화면에 표시되는 코드를 https://login.microsoft.com/device 에 입력 (본인 회사 MS 계정). 완료되면 `config/teams_graph_token.json`이 생성되고, 이후에는 refresh_token으로 자동 갱신되어 재로그인 불필요
 3. **Chrome 확장**: `chrome://extensions` → 개발자 모드 → `browser_extension` 폴더 로드
 4. `config/watch_config.json`의 `watch_paths`를 본인 작업 폴더로 수정
 5. Slack/Confluence/LiteLLM을 쓰려면 각각 `config/*_config.json`에 본인 토큰 발급

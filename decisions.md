@@ -372,6 +372,16 @@
 - 토큰에 `Files.Read.All`이 이미 포함돼 추가 인증이 전혀 필요 없음 (공유 링크 `u!`+base64url 디코딩으로 임의 파일 해석도 확인)
 - 파일 내용은 이미 로컬 파일 감시+COM 폴백 경로가 담당 — 클라우드 쪽은 "어떤 공유 문서를 언제 만졌나" 메타데이터만으로 충분
 
+### 42. 소스 구조: `weekly_report/` 패키지 + 역할별 하위 패키지 + 경로 일원화 (2026-10-01)
+
+**결정**: 루트에 흩어져 있던 파이썬 파일 28개를 `weekly_report/` 패키지의 `collectors/`·`storage/`·`ai/`·`report/`·`common/`·`gui/`로 재배치했다(`git mv`로 이력 유지, 모듈명에서 `_collector` 접미사 제거). 모든 파일 경로는 `weekly_report/paths.py`의 루트 기준 절대 경로 상수로 일원화했다. GUI(1551줄)는 화면별 mixin 모듈로 나누되, 클래스는 `WeeklyPulseApp` 하나로 유지한다. 테스트는 `tests/`, 유틸은 `scripts/`, 발표자료는 `docs/`, 쓰지 않는 파일(구 tkinter GUI, UI 시안)은 `archive/legacy/`로 옮겼다. 실행은 `python -m weekly_report`.
+
+**이유**:
+- 수집·저장·AI·보고서·GUI·테스트가 한 폴더에 섞여 있어 새 파일(rag.py 등)을 둘 기준이 없었음
+- 경로 기준이 실행 폴더 상대 경로(`"config/..."`)와 `__file__` 기준으로 섞여 있어, 다른 폴더에서 실행하면 설정을 못 찾는 버그가 실제로 있었음
+- mixin 방식은 메서드 이름·`self` 상태 공유를 그대로 둬서 동작 변경 위험이 작고, 테스트의 `WeeklyPulseApp` 사용도 그대로 둘 수 있음
+- `config/`·`data/` 위치는 유지 — 토큰·VectorDB·캐시를 다시 만들 필요 없음
+
 ## ❌ 폐기된 결정
 
 ### 1. 보고서 포맷: PDF/HTML 포함
