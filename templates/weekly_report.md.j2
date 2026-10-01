@@ -1,93 +1,77 @@
-# 주간 활동 보고서 ({{ week_start }} ~ {{ week_end }})
+# 주간 업무 보고서 ({{ week_start }} ~ {{ week_end }})
 
-## 요약
-{% if has_activities %}
-이번 주 총 {{ total_activities }}건의 활동이 기록되었습니다.
-{% if ai_tool_sessions > 0 %}이 중 Claude Code 기반 AI 활동은 {{ ai_tool_sessions }}건입니다.
-{% endif %}{% else %}
-이번 주 기록된 활동이 없습니다.
+## STEP 1. 프로그램별 상세 활동 내역
+{% if program_sections %}
+{% for section in program_sections %}
+
+### ■ {{ section.name }}
+{% if section.note %}
+
+> {{ section.note }}
 {% endif %}
 
-## 주요 하이라이트
-{% if highlights %}{% for highlight in highlights %}
-- {{ highlight }}
-{% endfor %}{% else %}
-- 해당 주간에 기록된 활동이 없습니다.
-{% endif %}
+{% for item in section["items"] %}
+#### {{ loop.index|circled }} {{ item.title }}
 
-{% if topics %}
-## 주제별 작업 (AI 분석)
-임베딩 기반 의미 클러스터링으로 이번 주 활동을 주제 단위로 묶었습니다.
-{% for t in topics %}
-- **{{ t.name }}** ({{ t.count }}건){% if t.examples %}: {{ t.examples|join(", ") }}{% endif %}
+{% for line in item.lines %}
+{% set seq = line|split_seq %}
+{% if not seq["items"] %}
+- {{ line }}
+{% else %}
+{% if seq.head %}
+- {{ seq.head }}
+{% endif %}
+{% for s in seq["items"] %}
+{% if seq.head %}
+    {{ s if s[0].isdigit() else "- " ~ s }}
+{% else %}
+{# 머리 없는 번호 목록은 불릿으로 — 여러 줄의 번호 목록이 하나로 합쳐 매겨지는 것 방지 #}
+- {{ s }}
+{% endif %}
 {% endfor %}
 {% endif %}
-{% if teams_my_message_count > 0 or teams_received_count > 0 %}
-## Teams 내 메시지 요약
-{% if teams_scope == "all" %}
-이번 주 Teams에서 주고받은 메시지 {{ teams_my_message_count }}건(보낸 {{ teams_sent_count }}건 / 받은 {{ teams_received_count }}건)을 요약했습니다.
+{% endfor %}
+
+{% endfor %}
+{% endfor %}
 {% else %}
-이번 주 Teams에서 내가 보낸 메시지 {{ teams_my_message_count }}건을 요약했습니다. (받은 메시지 {{ teams_received_count }}건)
+
+- 이번 주 기록된 활동이 없습니다.
+{% endif %}
+
+---
+
+## STEP 2. 업무 요약 (AI 종합 분석)
+
+### 이번 주 핵심 요약
+{% for line in week_summary %}
+- {{ line }}
+{% endfor %}
+{% if topics %}
+
+### 주제별 작업
+{% for t in topics %}
+- **{{ t.name }}** ({{ t.count }}건){% if t.examples %}: {{ t.examples|join(", ") }}{% endif %}
+
+{% endfor %}
 {% endif %}
 {% if teams_my_summary %}
 
-{{ teams_my_summary }}
+### Teams 메시지 요약
+{% if teams_scope == "all" %}
+주고받은 메시지 {{ teams_my_message_count }}건(보낸 {{ teams_sent_count }}건 / 받은 {{ teams_received_count }}건) 기준
 {% else %}
-
-- (AI 요약을 사용할 수 없어 건수만 표시합니다.)
-{% endif %}
+내가 보낸 메시지 {{ teams_my_message_count }}건 기준 (받은 메시지 {{ teams_received_count }}건)
 {% endif %}
 
-## 소스별 활동
-{% if by_source %}{% for source, count in by_source.items() %}
-- {{ source }}: {{ count }}건
-{% endfor %}{% else %}
-- 집계된 소스 활동이 없습니다.
+{{ teams_my_summary }}
 {% endif %}
+{% if program_stats %}
 
-## 액션별 활동
-{% if by_action %}{% for action, count in by_action.items() %}
-- {{ action }}: {{ count }}건
-{% endfor %}{% else %}
-- 집계된 액션이 없습니다.
-{% endif %}
-
-## 액션별 상세 내역 (실제 파일 목록)
-{% if activities_by_action %}{% for action, data in activities_by_action.items() %}
-### {{ action }} ({{ data.total }}건)
-{% if data.detail_hidden %}
-- 건수만 집계됩니다 (상세 목록 생략).
-{% else %}{% for item in data.files %}
-- [{{ item.timestamp }}] {{ item.file_path }}{% if item.summary %}: {{ item.summary }}{% endif %} ({{ item.source }})
-{% endfor %}{% if data.more > 0 %}
-- ... 외 {{ data.more }}건 더
-{% endif %}{% endif %}
-{% endfor %}{% else %}
-- 상세 내역이 없습니다.
-{% endif %}
-
-## 일별 활동 추이
-{% for day in daily_counts %}
-- {{ day.date }}: {{ day.count }}건
+### 프로그램별 활동 통계
+| 프로그램 | 활동 건수 | 항목 수 | 활동일 |
+|---|---|---|---|
+{% for s in program_stats %}
+| {{ s.name }} | {{ s.count }} | {{ s["items"] }} | {{ s.days }}일 |
 {% endfor %}
-
-## 주요 작업 파일/프로젝트
-{% if top_projects_or_files %}{% for path, count in top_projects_or_files %}
-- {{ path }} ({{ count }}회)
-{% endfor %}{% else %}
-- 집계 가능한 파일/프로젝트 정보가 없습니다.
-{% endif %}
-
-## 파일 유형별 활동
-{% if by_file_type %}{% for item in by_file_type %}
-- {{ item.file_type }} / {{ item.action }}: {{ item.count }}건
-{% endfor %}{% else %}
-- 파일 유형별 집계 데이터가 없습니다.
-{% endif %}
-
-## 최근 활동 (최대 {{ raw_activities|length }}건)
-{% if raw_activities %}{% for activity in raw_activities|reverse %}
-- {{ activity.timestamp }} | {{ activity.source }} | {{ activity.action }} | {{ activity.file_path }}
-{% endfor %}{% else %}
-- 표시할 최근 활동이 없습니다.
 {% endif %}

@@ -9,24 +9,22 @@ import fnmatch
 import json
 import os
 import re
-from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.shared import Cm, Pt
 from jinja2 import Environment, FileSystemLoader
 
 from database import ActivityDatabase, get_week_start_end
+from program_sections import MY_WORK_EXCLUDED, is_my_work, sections_digest, split_sequence
+from program_sections import build_program_sections as _build_sections
 
 
 class ReportGenerator:
     """Generate weekly Markdown and Word reports from activity data."""
-
-    # 상세 파일/항목 목록을 보여주지 않고 건수만 집계하면 되는 액션
-    COUNT_ONLY_ACTIONS = {"email_received"}
 
     # 사람이 읽기 어려운 노이즈성 파일(오피스 임시/잠금 파일 등)은 보고서에서 제외.
     # file_watcher.py에서도 걸러지지만, 그 전에 이미 DB에 쌓인 데이터를 위한
@@ -53,6 +51,8 @@ class ReportGenerator:
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        self.environment.filters["circled"] = self._circled
+        self.environment.filters["split_seq"] = split_sequence
 
     def fetch_week_activities(self, week_start, week_end):
         """주간 활동을 DB에서 읽어 노이즈 제거·중복 제거·정규화까지 적용해 반환.
@@ -67,78 +67,59 @@ class ReportGenerator:
         activities = [self._normalize_activity_path(a) for a in activities]
         return activities
 
+    def build_program_sections(self, activities):
+        """STEP 1: 프로그램 → 항목 구조. LLM 불필요."""
+        settings, me_name = self._teams_context()
+        return _build_sections(activities, me_name=me_name, teams_settings=settings)
+
     def analyze_week_activities(self, activities):
         """LLM/임베딩이 필요한 분석 단계 (LangGraph analyze 노드와 공유)."""
+        _, me_name = self._teams_context()
+        # 파트원만 수정한 공유 문서는 내 업무가 아니므로 주제 분석에서 제외
+        my_activities = [a for a in activities if is_my_work(a, me_name)]
         return {
             "teams_my": self._summarize_my_teams_messages(activities),
-            "topics": self._cluster_topics(activities),
+            "topics": self._cluster_topics(my_activities),
+            "week_summary": self._summarize_week(
+                self.build_program_sections(activities)
+            ),
         }
 
     def compose_weekly_data(self, week_start, week_end, activities, extras=None):
         """필터링된 활동 + 분석 결과를 보고서용 weekly_data dict로 조립."""
         extras = extras or {}
         teams_my = extras.get("teams_my") or {"count": 0, "summary": ""}
-        topics = extras.get("topics") or []
+        sections = self.build_program_sections(activities)
 
-        # 파일 유형별/일별 통계도 노이즈 필터·중복제거가 적용된 동일 데이터 기준으로
-        # 집계해야 총계와 맞는다 (과거엔 DB 원시값을 써서 숫자가 어긋났음)
-        file_type_stats = [
-            {"file_type": ft, "action": ac, "count": n}
-            for (ft, ac), n in sorted(
-                Counter(
-                    (a.get("file_type") or "unknown", a.get("action") or "unknown")
-                    for a in activities
-                ).items(),
-                key=lambda kv: (-kv[1], kv[0]),
-            )
+        program_stats = [
+            {
+                "name": s["name"],
+                "count": s["total"],
+                "days": s["active_days"],
+                "items": len(s["items"]),
+            }
+            for s in sections
         ]
-        daily_counts = self._build_daily_counts(
-            week_start, week_end, activities
-        )
-        by_source = self._sorted_counter(
-            activity.get("source", "unknown") for activity in activities
-        )
-        by_action = self._sorted_counter(
-            activity.get("action", "unknown") for activity in activities
-        )
-        top_projects_or_files = self._top_paths(activities)
-        ai_tool_sessions = sum(
-            1 for activity in activities if activity.get("source") == "claude_code"
-        )
-        recent_activities = activities[-20:]
-        activities_by_action = self._group_activities_by_action(activities)
 
-        weekly_data = {
+        return {
             "week_start": week_start,
             "week_end": week_end,
-            "has_activities": bool(activities),
+            "has_activities": bool(sections),
             "total_activities": len(activities),
-            "by_source": by_source,
-            "by_action": by_action,
-            "activities_by_action": activities_by_action,
-            "by_file_type": file_type_stats,
-            "daily_counts": daily_counts,
-            "top_projects_or_files": top_projects_or_files,
-            "ai_tool_sessions": ai_tool_sessions,
+            "program_sections": sections,
+            "program_stats": program_stats,
+            "week_summary": extras.get("week_summary")
+            or self._fallback_week_summary(sections),
             "teams_my_message_count": teams_my["count"],
             "teams_sent_count": teams_my.get("sent", teams_my["count"]),
             "teams_received_count": teams_my.get("received", 0),
             "teams_scope": teams_my.get("scope", "mine"),
-            "teams_my_summary": teams_my["summary"],
-            "topics": topics,
-            "raw_activities": recent_activities,
-            "raw_activity_total": len(activities),
-            "highlights": self._build_highlights(
-                len(activities),
-                by_source,
-                by_action,
-                daily_counts,
-                top_projects_or_files,
-                ai_tool_sessions,
+            # LLM 요약이 '# 제목'을 섞어 보내면 보고서 목차가 깨지므로 굵은 글씨로 강등
+            "teams_my_summary": re.sub(
+                r"(?m)^#{1,6}\s*(.+?)\s*$", r"**\1**", teams_my["summary"] or ""
             ),
+            "topics": extras.get("topics") or [],
         }
-
-        return weekly_data
 
     def collect_weekly_data(self, week_start=None, week_end=None):
         """주간 데이터 수집 및 집계 (순차 실행 경로).
@@ -166,143 +147,58 @@ class ReportGenerator:
 
         try:
             document = Document(self._ensure_word_template())
+            para = self._word_para
 
-            title = document.add_paragraph()
-            title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-            title_run = title.add_run("주간 활동 보고서")
-            title_run.bold = True
-            title_run.font.size = None
+            para(document, "주간 업무 보고서", size=18, bold=True, center=True)
+            para(document, f"기간: {weekly_data['week_start']} ~ {weekly_data['week_end']}", center=True)
 
-            period_paragraph = document.add_paragraph()
-            period_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-            period_paragraph.add_run(
-                f"기간: {weekly_data['week_start']} ~ {weekly_data['week_end']}"
-            )
+            para(document, "STEP 1. 프로그램별 상세 활동 내역", size=15, bold=True, space_before=12)
+            sections = weekly_data.get("program_sections") or []
+            if not sections:
+                para(document, "이번 주 기록된 활동이 없습니다.")
+            for section in sections:
+                para(document, f"■ {section['name']}", size=13.5, bold=True, space_before=10)
+                if section.get("note"):
+                    para(document, section["note"], italic=True, size=9.5)
+                for number, item in enumerate(section["items"], start=1):
+                    para(document, f"{self._circled(number)} {item['title']}",
+                         size=12, bold=True, indent=0.4, space_before=4)
+                    for line in item["lines"]:
+                        seq = split_sequence(line)
+                        if seq["head"]:
+                            para(document, f"- {seq['head']}", indent=1.0)
+                        for sub in seq["items"]:
+                            para(document, sub, indent=1.6 if seq["head"] else 1.0)
 
-            self._add_section_title(document, "요약")
-            if weekly_data["has_activities"]:
-                document.add_paragraph(
-                    f"이번 주 총 {weekly_data['total_activities']}건의 활동이 기록되었습니다."
-                )
-            else:
-                document.add_paragraph("이번 주 기록된 활동이 없습니다.")
-
-            if weekly_data["ai_tool_sessions"]:
-                document.add_paragraph(
-                    f"AI 코딩 관련 활동은 {weekly_data['ai_tool_sessions']}건입니다."
-                )
+            para(document, "STEP 2. 업무 요약 (AI 종합 분석)", size=15, bold=True, space_before=16)
+            para(document, "이번 주 핵심 요약", size=12, bold=True, space_before=6)
+            for line in weekly_data.get("week_summary") or []:
+                para(document, f"• {line}", indent=0.4)
 
             if weekly_data.get("topics"):
-                self._add_section_title(document, "주제별 작업 (AI 분석)")
-                document.add_paragraph(
-                    "임베딩 기반 의미 클러스터링으로 이번 주 활동을 "
-                    "주제 단위로 묶었습니다."
-                )
+                para(document, "주제별 작업", size=12, bold=True, space_before=6)
                 for topic in weekly_data["topics"]:
                     line = f"• {topic['name']} ({topic['count']}건)"
                     if topic.get("examples"):
                         line += ": " + ", ".join(topic["examples"])
-                    document.add_paragraph(line)
+                    para(document, line, indent=0.4)
 
-            if weekly_data.get("teams_my_message_count") or weekly_data.get(
-                "teams_received_count"
-            ):
-                self._add_section_title(document, "Teams 내 메시지 요약")
-                if weekly_data.get("teams_scope") == "all":
-                    document.add_paragraph(
-                        f"이번 주 Teams에서 주고받은 메시지 "
-                        f"{weekly_data['teams_my_message_count']}건"
-                        f"(보낸 {weekly_data['teams_sent_count']}건 / "
-                        f"받은 {weekly_data['teams_received_count']}건)을 요약했습니다."
-                    )
-                else:
-                    document.add_paragraph(
-                        f"이번 주 Teams에서 내가 보낸 메시지 "
-                        f"{weekly_data['teams_my_message_count']}건을 요약했습니다."
-                        f"(받은 메시지 {weekly_data['teams_received_count']}건)"
-                    )
-                if weekly_data.get("teams_my_summary"):
-                    document.add_paragraph(weekly_data["teams_my_summary"])
-                else:
-                    document.add_paragraph(
-                        "(AI 요약을 사용할 수 없어 건수만 표시합니다.)"
-                    )
+            if weekly_data.get("teams_my_summary"):
+                para(document, "Teams 메시지 요약", size=12, bold=True, space_before=6)
+                para(document, weekly_data["teams_my_summary"].replace("**", ""), indent=0.4)
 
-            self._add_summary_table(
-                document, "소스별 활동", weekly_data["by_source"], ("소스", "건수")
-            )
-            self._add_summary_table(
-                document, "액션별 활동", weekly_data["by_action"], ("액션", "건수")
-            )
-
-            self._add_section_title(document, "액션별 상세 내역 (실제 파일 목록)")
-            activities_by_action = weekly_data.get("activities_by_action") or {}
-            if activities_by_action:
-                for action, data in activities_by_action.items():
-                    document.add_paragraph(f"{action} ({data['total']}건)").runs[
-                        0
-                    ].bold = True
-                    if data.get("detail_hidden"):
-                        document.add_paragraph("건수만 집계됩니다 (상세 목록 생략).")
-                        continue
-                    for item in data["files"]:
-                        text = f"• [{item['timestamp']}] {item['file_path']}"
-                        if item.get("summary"):
-                            text += f": {item['summary']}"
-                        text += f" ({item['source']})"
-                        document.add_paragraph(text)
-                    if data["more"] > 0:
-                        document.add_paragraph(f"... 외 {data['more']}건 더")
-            else:
-                document.add_paragraph("상세 내역이 없습니다.")
-
-            self._add_section_title(document, "일별 활동 추이")
-            daily_table = document.add_table(rows=1, cols=2)
-            daily_header = daily_table.rows[0].cells
-            daily_header[0].text = "날짜"
-            daily_header[1].text = "건수"
-            for item in weekly_data["daily_counts"]:
-                row = daily_table.add_row().cells
-                row[0].text = str(item["date"])
-                row[1].text = str(item["count"])
-
-            self._add_section_title(document, "주요 활동 하이라이트")
-            for highlight in weekly_data["highlights"]:
-                document.add_paragraph(f"• {highlight}")
-
-            self._add_section_title(document, "주요 작업 파일/프로젝트")
-            if weekly_data["top_projects_or_files"]:
-                for path, count in weekly_data["top_projects_or_files"]:
-                    document.add_paragraph(f"• {path} ({count}회)")
-            else:
-                document.add_paragraph("집계 가능한 파일/프로젝트 정보가 없습니다.")
-
-            self._add_section_title(document, "파일 유형별 활동")
-            if weekly_data["by_file_type"]:
-                file_type_table = document.add_table(rows=1, cols=3)
-                header = file_type_table.rows[0].cells
-                header[0].text = "파일 유형"
-                header[1].text = "액션"
-                header[2].text = "건수"
-                for item in weekly_data["by_file_type"]:
-                    row = file_type_table.add_row().cells
-                    row[0].text = str(item.get("file_type", "unknown"))
-                    row[1].text = str(item.get("action", "unknown"))
-                    row[2].text = str(item.get("count", 0))
-            else:
-                document.add_paragraph("파일 유형별 집계 데이터가 없습니다.")
-
-            self._add_section_title(document, "최근 활동")
-            if weekly_data["raw_activities"]:
-                for activity in reversed(weekly_data["raw_activities"]):
-                    summary = (
-                        f"[{activity.get('timestamp', '')}] "
-                        f"{activity.get('source', 'unknown')} / {activity.get('action', 'unknown')} / "
-                        f"{activity.get('file_path', '')}"
-                    )
-                    document.add_paragraph(f"• {summary}")
-            else:
-                document.add_paragraph("표시할 최근 활동이 없습니다.")
+            stats = weekly_data.get("program_stats") or []
+            if stats:
+                para(document, "프로그램별 활동 통계", size=12, bold=True, space_before=6)
+                table = document.add_table(rows=1, cols=4)
+                for cell, text in zip(table.rows[0].cells, ("프로그램", "활동 건수", "항목 수", "활동일")):
+                    cell.text = text
+                for stat in stats:
+                    row = table.add_row().cells
+                    row[0].text = stat["name"]
+                    row[1].text = str(stat["count"])
+                    row[2].text = str(stat["items"])
+                    row[3].text = f"{stat['days']}일"
 
             document.save(str(output))
         except Exception as error:
@@ -410,28 +306,74 @@ class ReportGenerator:
             activity["file_path"] = path.replace("/", "\\")
         return activity
 
-    def _build_daily_counts(self, week_start, week_end, activities):
-        start_date = self._parse_date(week_start)
-        end_date = self._parse_date(week_end)
-        counts_by_date = Counter(
-            activity.get("timestamp", "")[:10]
-            for activity in activities
-            if activity.get("timestamp")
-        )
+    def _teams_context(self):
+        """(Teams 보고 설정, 내 표시 이름). 설정 로드 실패 시 설정은 빈 dict."""
+        try:
+            from teams_collector import load_teams_settings
+            settings = load_teams_settings() or {}
+        except Exception:
+            settings = {}
+        me_name = None
+        token_file = self.base_dir / "config" / "teams_graph_token.json"
+        try:
+            with open(token_file, encoding="utf-8") as f:
+                me_name = json.load(f).get("me_display_name")
+        except (OSError, json.JSONDecodeError):
+            pass
+        return settings, me_name
 
-        ordered_counts = []
-        current = start_date
-        while current <= end_date:
-            date_key = current.strftime("%Y-%m-%d")
-            ordered_counts.append(
-                {"date": date_key, "count": int(counts_by_date.get(date_key, 0))}
+    WEEK_SUMMARY_PROMPT = (
+        "다음은 한 주간 프로그램별 업무 활동 기록이야. 리더 주간회의 보고용으로 "
+        "이번 주 수행한 업무를 핵심 위주로 3~6개 불릿으로 한국어 요약해줘. "
+        "각 줄은 '- '로 시작하고 한 문장으로 쓴다. 단순 웹 열람·받은 메일·잡담은 "
+        "비중을 낮추고, 직접 작성·수정·결정·공유한 일을 중심으로 묶어라. 불릿만 출력."
+    )
+
+    def _summarize_week(self, sections):
+        """STEP 2 핵심 요약 — STEP 1 섹션 전체를 LLM으로 요약해 불릿 목록 반환.
+        LLM 비활성/실패 시 빈 리스트 (compose 단계에서 규칙 기반 요약으로 대체)."""
+        digest = sections_digest(sections)  # 공유 문서 변경(파트원 작업)은 제외됨
+        if not digest:
+            return []
+        try:
+            from llm_summarizer import LLMSummarizer
+            result = LLMSummarizer(
+                str(self.base_dir / "config" / "litellm_config.json")
+            ).complete(
+                self.WEEK_SUMMARY_PROMPT, digest,
+                max_tokens=1500, max_input=12000,
             )
-            current += timedelta(days=1)
-        return ordered_counts
+        except Exception as e:
+            print(f"Warning: weekly summary failed: {e}")
+            return []
+        if not result:
+            return []
+        bullets = [
+            line.strip().lstrip("-•*").strip()
+            for line in result.splitlines()
+            if line.strip().startswith(("-", "•", "*"))
+        ]
+        return bullets or [result.strip()]
 
-    def _sorted_counter(self, values: Iterable[str]) -> dict[str, int]:
-        counter = Counter(value or "unknown" for value in values)
-        return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
+    def _fallback_week_summary(self, sections):
+        """LLM 없이 STEP 1 섹션만으로 만드는 규칙 기반 요약 (내 업무 섹션만)."""
+        sections = [s for s in sections if s["name"] not in MY_WORK_EXCLUDED]
+        if not sections:
+            return ["이번 주 기록된 활동이 없습니다."]
+        lines = []
+        for section in sections:
+            titles = [item["title"] for item in section["items"]]
+            examples = ", ".join(titles[:3]) + (f" 외 {len(titles) - 3}건" if len(titles) > 3 else "")
+            lines.append(
+                f"{section['name']}: {section['active_days']}일간 {len(titles)}개 항목 "
+                f"({section['total']}건) — {examples}"
+            )
+        return lines
+
+    @staticmethod
+    def _circled(number):
+        """1 → ①, … 20 → ⑳, 이후는 (21)"""
+        return chr(0x2460 + number - 1) if 1 <= number <= 20 else f"({number})"
 
     def _summarize_my_teams_messages(self, activities):
         """이번 주 Teams 메시지 중 '내가 보낸' 것만 골라 LLM으로 요약.
@@ -440,26 +382,14 @@ class ReportGenerator:
         일치하는 메시지 (신규 수집분은 details.from_me 플래그도 있지만,
         과거 데이터 호환을 위해 sender 비교를 우선 사용)."""
         # 보고서 범위는 config/teams_settings.json의 report_scope가 결정
-        try:
-            from teams_collector import load_teams_settings
-            settings = load_teams_settings()
-            scope = settings.get("report_scope", "mine")
-            work_only = bool(settings.get("work_only", True))
-            excluded = settings.get("excluded_chats", [])
-        except Exception:
-            scope = "mine"
-            work_only = False
-            excluded = []
+        settings, me_name = self._teams_context()
+        scope = settings.get("report_scope", "mine")
+        # 설정 파일이 없을 땐 LLM 필터를 쓰지 않음 (기존 동작 유지)
+        work_only = bool(settings.get("work_only", True)) if settings else False
+        excluded = settings.get("excluded_chats", [])
         excluded_ids = {c.get("id") for c in excluded if isinstance(c, dict)}
         excluded_titles = {c.get("title") for c in excluded if isinstance(c, dict)}
 
-        token_file = self.base_dir / "config" / "teams_graph_token.json"
-        me_name = None
-        try:
-            with open(token_file, encoding="utf-8") as f:
-                me_name = json.load(f).get("me_display_name")
-        except (OSError, json.JSONDecodeError):
-            pass
         if not me_name and scope == "mine":
             return {"count": 0, "sent": 0, "received": 0, "scope": scope, "summary": ""}
 
@@ -636,135 +566,27 @@ class ReportGenerator:
             for pattern in self.NOISE_FILENAME_PATTERNS
         )
 
-    def _group_activities_by_action(self, activities, limit_per_action=15):
-        """액션(created/modified/deleted/moved 등)별로 실제 파일 목록을 묶는다.
-
-        건수만 보여주는 `by_action`과 달리, 각 액션에 대해 실제로 어떤
-        파일이 생성/수정/삭제/이동되었는지 파일 경로를 나열한다.
-        """
-        grouped: dict[str, list[dict]] = {}
-        for activity in activities:
-            action = activity.get("action", "unknown")
-            grouped.setdefault(action, []).append(activity)
-
-        result = {}
-        for action, items in grouped.items():
-            # 최신순으로 정렬
-            items_sorted = sorted(
-                items, key=lambda a: a.get("timestamp", ""), reverse=True
-            )
-            shown = [
-                {
-                    "file_path": item.get("file_path", ""),
-                    "timestamp": item.get("timestamp", ""),
-                    "source": item.get("source", "unknown"),
-                    "summary": self._extract_summary(item),
-                }
-                for item in items_sorted[:limit_per_action]
-            ]
-            result[action] = {
-                "files": shown,
-                "total": len(items_sorted),
-                "more": max(0, len(items_sorted) - limit_per_action),
-                # 받은 메일처럼 건수만 필요한 액션은 상세 목록을 숨긴다
-                "detail_hidden": action in self.COUNT_ONLY_ACTIONS,
-            }
-
-        # 건수 많은 액션부터
-        return dict(
-            sorted(result.items(), key=lambda kv: -kv[1]["total"])
-        )
-
-    def _extract_summary(self, activity):
-        """활동의 details(JSON)에서 요약 텍스트를 꺼낸다."""
-        details = activity.get("details")
-        if not details:
-            return ""
-        if isinstance(details, str):
-            try:
-                details = json.loads(details)
-            except (TypeError, ValueError):
-                return ""
-        if isinstance(details, dict):
-            # Teams 메시지는 summary가 없고 text가 본문이므로 함께 확인
-            return str(details.get("summary") or details.get("text") or "")
-        return ""
-
-    def _top_paths(self, activities, limit=5):
-        counter = Counter()
-        for activity in activities:
-            path = (activity.get("file_path") or "").strip()
-            if not path:
-                continue
-            counter[path] += 1
-        return counter.most_common(limit)
-
-    def _build_highlights(
-        self,
-        total_activities,
-        by_source,
-        by_action,
-        daily_counts,
-        top_projects_or_files,
-        ai_tool_sessions,
-    ):
-        if total_activities == 0:
-            return ["이번 주 기록된 활동이 없습니다."]
-
-        highlights = [f"이번 주 총 활동 수는 {total_activities}건입니다."]
-
-        if by_source:
-            top_source, top_source_count = next(iter(by_source.items()))
-            highlights.append(
-                f"가장 많은 활동 소스는 {top_source}이며 {top_source_count}건입니다."
-            )
-
-        if by_action:
-            top_action, top_action_count = next(iter(by_action.items()))
-            highlights.append(
-                f"가장 많이 기록된 액션은 {top_action}이며 {top_action_count}건입니다."
-            )
-
-        peak_day = max(daily_counts, key=lambda item: item["count"], default=None)
-        if peak_day:
-            highlights.append(
-                f"활동이 가장 많았던 날은 {peak_day['date']}로 {peak_day['count']}건입니다."
-            )
-
-        if top_projects_or_files:
-            top_path, top_path_count = top_projects_or_files[0]
-            highlights.append(
-                f"가장 자주 등장한 파일/프로젝트는 {top_path}로 {top_path_count}회 기록되었습니다."
-            )
-
-        if ai_tool_sessions:
-            highlights.append(f"Claude Code 기반 AI 활동은 {ai_tool_sessions}건입니다.")
-
-        return highlights
-
-    def _add_summary_table(self, document, title, items, headers):
-        self._add_section_title(document, title)
-        if not items:
-            document.add_paragraph("집계된 데이터가 없습니다.")
-            return
-
-        table = document.add_table(rows=1, cols=2)
-        header = table.rows[0].cells
-        header[0].text = headers[0]
-        header[1].text = headers[1]
-
-        for key, value in items.items():
-            row = table.add_row().cells
-            row[0].text = str(key)
-            row[1].text = str(value)
-
     def _parse_date(self, value):
         return datetime.strptime(value, "%Y-%m-%d")
 
-    def _add_section_title(self, document, title):
+    @staticmethod
+    def _word_para(document, text, size=10.5, bold=False, italic=False,
+                   indent=0.0, center=False, space_before=0):
+        """글꼴 크기(pt)·굵기·들여쓰기(cm)를 직접 지정한 문단.
+        자체 생성 템플릿에는 Heading 스타일이 없어서 크기를 run에 직접 준다."""
         paragraph = document.add_paragraph()
-        run = paragraph.add_run(title)
-        run.bold = True
+        if center:
+            paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        fmt = paragraph.paragraph_format
+        if indent:
+            fmt.left_indent = Cm(indent)
+        if space_before:
+            fmt.space_before = Pt(space_before)
+        run = paragraph.add_run(text)
+        run.font.size = Pt(size)
+        run.bold = bold
+        run.italic = italic
+        return paragraph
 
     def _ensure_word_template(self) -> str:
         template_path = Path(self.template_dir) / "blank_report_template.docx"

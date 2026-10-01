@@ -43,6 +43,25 @@ PROMPT_TEMPLATES = {
         "다음은 Outlook 메일이야. 발신자 의도와 핵심 안건을 한국어로 "
         "한 줄 요약해줘. 머리말·서명·면책문구는 제외."
     ),
+    "diff": (
+        "다음은 한 문서의 이전 버전과 새 버전 사이에 바뀐 줄 목록이야. "
+        "[+]는 새로 생겼거나 바뀐 뒤의 줄, [-]는 사라졌거나 바뀌기 전의 줄이고 "
+        "엑셀은 '[시트명] 셀 | 셀' 형식이야. 짝이 맞는 [-]/[+]는 '수정'으로 해석해서, "
+        "무엇을 어떻게 바꿨는지 한국어로 최대 500자 이내에서 요약해줘. "
+        "변경이 적으면 짧게 1문장으로, 많으면 중요한 변경부터 구체적으로 쓰고 "
+        "사소한 것은 '등'으로 묶어. "
+        "'OO 항목 추가', 'OO를 XX로 변경', 'OO를 A차→B차로 이동'처럼 구체적으로 쓰고, "
+        "기호·줄번호·서론 없이 요약문만 출력해."
+    ),
+    "work": (
+        "너는 개발자의 업무 일지를 정리하는 비서야. <requests> 안의 각 줄은 개발자가 하루 동안 "
+        "AI 코딩 도구에 보낸 지시문 기록이고, 모두 그대로 작업이 진행됐다고 간주해. "
+        "각 지시문을 '~ 구현', '~ 수정', '~ 개선', '~ 조사' 같은 완료형 작업 항목으로 바꿔 쓰고, "
+        "비슷한 항목은 하나로 합쳐 '1. …', '2. …' 번호 목록으로 출력해 (한국어, 전체 500자 이내). "
+        "예) 입력 '- 로그인 화면에 비밀번호 찾기 버튼 추가해줘' / '- 버튼 색을 파란색으로 바꿔줘' "
+        "→ 출력 '1. 로그인 화면에 비밀번호 찾기 버튼 추가 및 버튼 색상 변경'. "
+        "질문·되묻기·필요한 정보 요청·설명은 절대 쓰지 말고 번호 목록만 출력해."
+    ),
     "topic": (
         "다음은 한 주간의 업무 활동 목록이야. 이 활동들을 하나로 묶는 "
         "주제명을 20자 이내 한국어 명사구로 붙여줘. 주제명만 출력하고 "
@@ -73,7 +92,7 @@ class LLMSummarizer:
 
     # ---------- LCEL 체인 ----------
 
-    def _make_chain(self):
+    def _make_chain(self, max_tokens=None, temperature=0.3):
         """prompt | ChatOpenAI(LiteLLM 프록시) | StrOutputParser LCEL 체인.
         체인 내장 재시도 2회. LangChain 미설치 시 None."""
         if not _LANGCHAIN_AVAILABLE:
@@ -84,14 +103,14 @@ class LLMSummarizer:
             self.config.get("model")
             or "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
         )
-        max_tokens = int(self.config.get("max_tokens") or 150)
+        max_tokens = int(max_tokens or self.config.get("max_tokens") or 150)
 
         llm = ChatOpenAI(
             base_url=f"{base_url}/v1",
             api_key=api_key,
             model=model,
             max_tokens=max_tokens,
-            temperature=0.3,
+            temperature=temperature,
             timeout=15,
         )
         prompt = ChatPromptTemplate.from_messages(
@@ -101,23 +120,26 @@ class LLMSummarizer:
             stop_after_attempt=2
         )
 
-    def _chain(self):
-        if "default" not in self._chain_cache:
-            self._chain_cache["default"] = self._make_chain()
-        return self._chain_cache["default"]
+    def _chain(self, max_tokens=None, temperature=0.3):
+        key = (max_tokens or "default", temperature)
+        if key not in self._chain_cache:
+            self._chain_cache[key] = self._make_chain(max_tokens, temperature)
+        return self._chain_cache[key]
 
     # ---------- 공개 API ----------
 
-    def complete(self, system_prompt, user_text, max_tokens=None, temperature=0.3):
-        """임의 프롬프트로 LLM 호출. 체인 실패 시 None."""
+    def complete(self, system_prompt, user_text, max_tokens=None, temperature=0.3,
+                 max_input=4000):
+        """임의 프롬프트로 LLM 호출. 체인 실패 시 None.
+        max_tokens는 응답 길이 상한(미지정 시 config), max_input은 입력 자르기 기준."""
         if not self.enabled:
             return None
-        chain = self._chain()
+        chain = self._chain(max_tokens, temperature)
         if chain is None:
             return None
         try:
             return chain.invoke(
-                {"system": system_prompt, "text": (user_text or "")[:4000]}
+                {"system": system_prompt, "text": (user_text or "")[:max_input]}
             ).strip()
         except Exception as error:
             print(f"Warning: LLM call failed, falling back: {error}")
@@ -136,4 +158,6 @@ class LLMSummarizer:
         if len(text) <= max_len:
             return text
         system = PROMPT_TEMPLATES.get(template, DEFAULT_SYSTEM_PROMPT)
-        return self.complete(f"{system} (최대 {max_len}자)", text)
+        # 한국어는 대략 1자당 1토큰 이상이라, 요청 길이에 맞춰 응답 상한을 넉넉히
+        max_tokens = max(int(self.config.get("max_tokens") or 150), max_len * 2)
+        return self.complete(f"{system} (최대 {max_len}자)", text, max_tokens=max_tokens)
