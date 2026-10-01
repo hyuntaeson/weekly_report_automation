@@ -308,6 +308,46 @@ class IntegratedCollector:
             # Wait for next collection
             time.sleep(self.sharepoint_collection_interval)
 
+    def collect_once(self, days=7, progress=None):
+        """가져와야 하는(pull) 소스를 한 번씩 수집해 저장 → {소스: 저장 건수 | 오류}.
+
+        GUI는 파일 감시·브라우저 서버만 상시 실행하므로, 보고서 생성 직전에
+        이걸 호출해야 IDE·Claude Code·Outlook·Teams 등이 보고서에 반영된다.
+        한 소스가 실패해도 나머지는 계속 수집한다."""
+        if os.name == "nt":
+            try:
+                import pythoncom  # Outlook/Office COM은 스레드마다 초기화 필요
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+
+        steps = [
+            ("Claude Code", lambda: self.ai_tool_collector.save_to_database(
+                self.ai_tool_collector.collect_all_ai_tool_activity(hours=24 * days))),
+            ("IDE", lambda: self.ide_collector.save_to_database(
+                self.ide_collector.collect_all_ide_activity(days=days))),
+            ("Outlook", lambda: self.outlook_collector.save_to_database(
+                self.outlook_collector.collect_all_outlook_activity(days=days))),
+            ("Confluence", lambda: self.confluence_collector.save_to_database(
+                self.confluence_collector.collect_all_confluence_activity(days=days))),
+            ("Teams", lambda: self.teams_collector.save_to_database(
+                self.teams_collector.collect_all_teams_activity(days=days))),
+            ("OneNote", lambda: self.onenote_collector.save_to_database(
+                self.onenote_collector.collect_activity(days=days))),
+            ("SharePoint", lambda: self.sharepoint_collector.save_to_database(
+                self.sharepoint_collector.collect_activity(days=days))),
+        ]
+        results = {}
+        for name, run in steps:
+            if progress:
+                progress(name)
+            try:
+                results[name] = run() or 0
+            except Exception as e:
+                results[name] = f"오류: {e}"
+                print(f"Warning: {name} collection failed: {e}")
+        return results
+
     def stop(self):
         """Stop all collectors"""
         if not self.is_running:

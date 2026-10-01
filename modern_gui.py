@@ -1283,8 +1283,14 @@ class WeeklyPulseApp:
     def generate_report(self, e):
         """Generate weekly report"""
         try:
+            from integrated_collector import IntegratedCollector
             from report_generator import ReportGenerator
 
+            # 상시 실행 중인 건 파일 감시·브라우저뿐이라, IDE·Claude Code·Outlook·
+            # Teams 등은 보고서 직전에 한 번 수집해야 반영된다
+            IntegratedCollector([]).collect_once(
+                days=7, progress=lambda name: self.show_snack(f"최신 데이터 수집 중: {name}…")
+            )
             self.show_snack("Generating weekly report...")
             generator = ReportGenerator()
             result = generator.generate_and_save_weekly_report()
