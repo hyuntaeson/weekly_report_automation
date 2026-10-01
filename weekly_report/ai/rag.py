@@ -27,6 +27,8 @@ DEFAULT_SETTINGS = {
     # 사용자가 Settings에서 추가/삭제 — 행정 업무(손익·구매·계약)도 기본 포함
     "rag_topics": ["장애 대응", "배포·테스트", "결제 연동", "교육·역량 개발", "손익·예산", "구매·계약"],
     "rag_past_weeks": 4,
+    # 활동 벡터 보관 기간(주) — 지난 주는 주간 요약 벡터로 남기고 삭제 (storage/retention.py)
+    "vector_retention_weeks": 12,
 }
 # 코사인 유사도 기준 — 이 임베딩 모델에서 관련 기록은 보통 0.45~0.55, 무관한 기록은 0.2~0.3
 MIN_SCORE = 0.40
@@ -273,3 +275,23 @@ class TopicQueryRAG:
             "evidence": [{"n": i, "label": label, "past": past}
                          for i, (label, past) in enumerate(sources, start=1)],
         }
+
+
+def search_past_weeks(query, limit=3, min_score=MIN_SCORE, db_path=paths.DB_PATH,
+                      summaries=None, embed=None):
+    """장기 질의 ("지난 분기 결제 업무") — 보관 기간이 지나 활동 벡터가 지워진 주까지 찾는다.
+    ① 주간 요약 벡터에서 관련 주를 찾고 ② 그 주의 원본 활동은 SQLite에서 꺼내 상세 근거로 붙인다.
+    반환: [{"week_start", "week_end", "score", "text"(주간 요약), "activities"}] 유사도 내림차순"""
+    from weekly_report.storage.vector_store import WeekSummaryStore
+
+    if embed is None:
+        from weekly_report.ai.clusterer import ActivityClusterer
+        embed = ActivityClusterer().embed
+    vectors = embed([query])
+    if not vectors:
+        return []
+    hits = (summaries or WeekSummaryStore()).search(vectors[0], limit=limit, min_score=min_score)
+    with ActivityDatabase(db_path) as db:
+        for hit in hits:
+            hit["activities"] = db.get_activities_by_date_range(hit["week_start"], hit["week_end"])
+    return hits

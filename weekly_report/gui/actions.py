@@ -273,6 +273,9 @@ class ActionsMixin:
             except Exception as ex:
                 print(f"Error generating weekly report: {ex}")
                 self.set_report_status("생성 실패", detail=f"{ex} · 경과 {elapsed()}")
+                return
+            # 보관 기간이 지난 활동 벡터 정리 (주 1회) — 생성 완료 표시 뒤에 돌려 체감 속도에 영향 없게
+            self.auto_cleanup_storage()
 
         # Flet 0.86은 화면 갱신이 페이지 컨텍스트에 묶여 있어서, 일반 threading.Thread에서
         # page.update()를 부르면 오류 없이 무시됨 → page.run_thread로 실행해야 상태 줄이 갱신됨

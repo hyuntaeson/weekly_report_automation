@@ -435,6 +435,84 @@ def t_vector_store():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_storage_retention():
+    """저장소 보관 정책: 보관 기간이 지난 주는 요약 벡터 저장 후 활동 벡터 삭제, 요약 실패 주는 보류,
+    최근 주는 유지, 레거시 임베딩 테이블 삭제, 장기 질의(요약 → 원본 활동) (임시 폴더·DB, 4차원)"""
+    import json as _json, shutil, sqlite3, tempfile
+    from datetime import date
+    from weekly_report.storage.vector_store import ActivityVectorStore, WeekSummaryStore
+    from weekly_report.storage.retention import apply_retention
+    from weekly_report.storage.database import ActivityDatabase
+    from weekly_report.ai.rag import search_past_weeks
+    tmp = tempfile.mkdtemp(prefix="wr_retention_")
+    try:
+        store = ActivityVectorStore(path=os.path.join(tmp, "q"), vector_size=4)
+        summaries = WeekSummaryStore(path=store.path, vector_size=4)
+        db_path = os.path.join(tmp, "a.db")
+        with ActivityDatabase(db_path) as db:
+            db.add_activities([{"timestamp": "2026-06-02T10:00:00", "action": "sent", "file_path": "결제 연동 테스트",
+                                "source": "outlook", "details": "{}"}])
+            db.save_weekly_summary("2026-06-01", "2026-06-07", {
+                "week_start": "2026-06-01", "week_end": "2026-06-07",
+                "week_summary": ["결제 연동 테스트 완료"], "rag_sections": []})
+            db.conn.execute("CREATE TABLE activity_embeddings (activity_key TEXT PRIMARY KEY, text TEXT, vector TEXT)")
+            db.conn.execute("INSERT INTO activity_embeddings VALUES ('k', 't', '[]')")
+            db.conn.commit()
+
+        def act(ts, path):
+            return {"timestamp": ts, "action": "message", "file_path": path, "source": "teams", "details": "{}"}
+        store.upsert([
+            (act("2026-06-02T10:00:00", "결제"), "결제", [1, 0, 0, 0]),       # 보고서 있는 지난 주 → 요약 후 삭제
+            (act("2026-06-10T10:00:00", "장애"), "장애", [0, 1, 0, 0]),       # 보고서 없는 지난 주 → 요약 실패 시 보류
+            (act("2026-09-29T10:00:00", "배포"), "배포", [0, 0, 1, 0]),       # 보관 기간 안 → 유지
+        ])
+        embed = lambda text: [1, 0, 0, 0] if "결제" in text else None
+        result = apply_retention(
+            8, db_path=db_path, store=store, summaries=summaries, today=date(2026, 10, 1),
+            summary_for_week=lambda m: "결제 연동 테스트 완료" if m == date(2026, 6, 1) else "장애 대응",
+            embed=embed, cache_path=os.path.join(tmp, "none.db"),
+        )
+        if result["summarized"] != ["2026-06-01"] or result["kept"] != ["2026-06-08"] or result["deleted"] != 1:
+            return fail(f"정리 결과 불일치: {result}")
+        if store.count() != 2 or summaries.week_starts() != {"2026-06-01"}:
+            return fail(f"남은 벡터 {store.count()}개, 요약 {summaries.week_starts()}")
+        if result["legacy_dropped"] != 1:
+            return fail("레거시 임베딩 테이블 삭제 실패")
+        again = apply_retention(8, db_path=db_path, store=store, summaries=summaries, today=date(2026, 10, 1),
+                                summary_for_week=lambda m: "장애 대응", embed=lambda t: [0, 1, 0, 0],
+                                cache_path=os.path.join(tmp, "none.db"))
+        if again["summarized"] != ["2026-06-08"] or store.count() != 1:
+            return fail(f"보류 주 재시도 실패: {again}")
+        hits = search_past_weeks("결제", db_path=db_path, summaries=summaries, embed=lambda qs: [[1, 0, 0, 0]])
+        if not hits or hits[0]["week_start"] != "2026-06-01" or len(hits[0]["activities"]) != 1:
+            return fail(f"장기 질의 실패: {hits[:1]}")
+        return ok("요약 저장 후 삭제·요약 실패 주 보류→재시도·최근 주 유지·레거시 삭제·장기 질의 정상")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_storage_settings():
+    """Settings > 저장소 관리: 보관 기간 선택 저장, 사용량·속도 안내 표시 (실제 설정 파일은 저장하지 않음)"""
+    from types import SimpleNamespace
+    from weekly_report.gui.app import WeeklyPulseApp
+    app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+    app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None, run_thread=lambda fn: None)
+    app.show_snack = lambda msg: None
+    app._save_report_settings = lambda: None
+    app.report_settings = {}
+    app._create_storage_settings_section()
+    if app.retention_dropdown.value != "12" or "확인 중" not in app.storage_usage_text.value:
+        return fail(f"초기 표시 불일치: {app.retention_dropdown.value}")
+    app._retention_changed("26")
+    app._vector_stats = {"count": 1485, "open_seconds": 0.4, "weekly_rate": 1000, "summary_weeks": 0}
+    app._render_storage_info()
+    if app.report_settings["vector_retention_weeks"] != 26:
+        return fail("보관 기간 저장 실패")
+    if "1,485개" not in app.storage_usage_text.value or "26주를 다 채우면 약 26,000개" not in app.storage_speed_text.value:
+        return fail(f"사용량/속도 안내 불일치: {app.storage_speed_text.value}")
+    return ok("보관 기간 선택·사용량(벡터 수·여는 시간)·기간별 예상 속도 안내 정상")
+
+
 def t_split_sequence():
     """요약 줄 안의 번호 목록 분리 — IP·버전·날짜는 번호로 오인하지 않는지"""
     from weekly_report.report.sections import split_sequence
@@ -792,6 +870,7 @@ TESTS = [
     ("PROC-06", "데이터 가공", "공유 문서 변경 분리(내 수정/파트원 수정)", t_shared_doc_split),
     ("PROC-07", "데이터 가공", "요약 번호 목록 줄바꿈 분리", t_split_sequence),
     ("PROC-08", "데이터 가공", "VectorDB 저장·필터 검색 (Qdrant)", t_vector_store),
+    ("PROC-09", "데이터 가공", "저장소 보관 정책 (요약 후 벡터 정리)", t_storage_retention),
 
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
@@ -813,6 +892,7 @@ TESTS = [
     ("GUI-04", "GUI·실행", "예상질문자 설정 (추가·삭제)", t_expected_questioner_settings),
     ("GUI-05", "GUI·실행", "주제 질의 설정 (추가·삭제)", t_rag_topic_settings),
     ("GUI-06", "GUI·실행", "보고서 생성 상태 표시", t_report_status_panel),
+    ("GUI-07", "GUI·실행", "저장소 관리 설정 (보관 기간·사용량)", t_storage_settings),
 ]
 
 if __name__ == "__main__":

@@ -84,6 +84,8 @@ class WatchSettingsMixin:
                     self._create_teams_settings_section(),
                     ft.Container(height=24),
                     self._create_report_settings_section(),
+                    ft.Container(height=24),
+                    self._create_storage_settings_section(),
                 ],
                 spacing=8,
             ),

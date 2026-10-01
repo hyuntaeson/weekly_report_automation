@@ -103,7 +103,12 @@ class ActivityDatabase:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
+        # upsert(ON CONFLICT)의 기준 — 새 DB는 _migrate_database 시점에 테이블이 없어 여기서 만든다
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_activity
+            ON activities(timestamp, action, file_path, source)
+        ''')
+
         # Weekly summary table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS weekly_summaries (
@@ -128,17 +133,8 @@ class ActivityDatabase:
             )
         ''')
 
-        # (레거시) 예전 임베딩 저장 테이블 — 이제 임베딩은 VectorDB(vector_store.py)에 저장하고,
-        # 이 테이블은 최초 1회 VectorDB로 이전할 때 원본으로만 읽는다.
-        # activity_key = "timestamp|action|file_path|source" (activities UNIQUE 키와 동일 조합)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS activity_embeddings (
-                activity_key TEXT PRIMARY KEY,
-                text TEXT,
-                vector TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        # (레거시) activity_embeddings 테이블은 더 만들지 않는다 — 임베딩은 VectorDB(vector_store.py)에
+        # 저장하고, 남아 있던 테이블은 VectorDB 이전 후 저장소 정리(retention.py)가 삭제한다.
 
         self.conn.commit()
     

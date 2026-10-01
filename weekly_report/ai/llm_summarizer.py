@@ -20,7 +20,7 @@ import time
 from weekly_report import paths
 
 # temperature 0(결정적) 호출의 응답 캐시 — 같은 입력이면 같은 출력이므로 결과는 그대로, 재생성만 빨라짐
-CACHE_DB = os.path.join(paths.DATA_DIR, "llm_cache.db")
+CACHE_DB = paths.LLM_CACHE
 CACHE_TTL = 7 * 24 * 3600
 
 try:

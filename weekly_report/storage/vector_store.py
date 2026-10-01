@@ -21,7 +21,7 @@ from datetime import datetime
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, FieldCondition, Filter, MatchAny, PointStruct, Range, VectorParams,
+    Distance, FieldCondition, Filter, FilterSelector, MatchAny, PointStruct, Range, VectorParams,
 )
 
 from weekly_report import paths
@@ -29,6 +29,7 @@ from weekly_report.common.timeutil import to_local_datetime
 
 DEFAULT_PATH = paths.QDRANT_DIR
 COLLECTION = "activities"
+SUMMARY_COLLECTION = "week_summaries"  # 보관 기간이 지난 주의 STEP 2 요약 — 주당 1개, 영구 보관
 VECTOR_SIZE = 3072  # text-embedding-3-large
 # 로컬 모드는 같은 폴더를 동시에 두 클라이언트가 열 수 없음 — 보고서 분석 단계를 병렬로 돌릴 때 직렬화
 _LOCK = threading.RLock()
@@ -154,6 +155,35 @@ class ActivityVectorStore:
                 break
         return hits
 
+    def count_since(self, ts):
+        """ts(epoch) 이후 활동 벡터 수 — 주간 증가량 추정용"""
+        with self._client() as client:
+            return client.count(self.collection, exact=True, count_filter=Filter(
+                must=[FieldCondition(key="ts", range=Range(gte=ts))])).count
+
+    def timestamps_before(self, ts):
+        """ts(epoch) 이전 활동 벡터들의 ts 목록 (벡터는 읽지 않음) — 보관 기간 정리 대상 주 찾기"""
+        found, offset = [], None
+        flt = Filter(must=[FieldCondition(key="ts", range=Range(lt=ts))])
+        with self._client() as client:
+            while True:
+                points, offset = client.scroll(
+                    self.collection, scroll_filter=flt, limit=1000, offset=offset,
+                    with_payload=["ts"], with_vectors=False,
+                )
+                found.extend(p.payload.get("ts", 0.0) for p in points)
+                if offset is None:
+                    return found
+
+    def delete_range(self, ts_from, ts_to):
+        """ts_from 이상 ts_to 미만 활동 벡터 삭제. 반환: 삭제 건수."""
+        flt = Filter(must=[FieldCondition(key="ts", range=Range(gte=ts_from, lt=ts_to))])
+        with self._client() as client:
+            n = client.count(self.collection, exact=True, count_filter=flt).count
+            if n:
+                client.delete(self.collection, points_selector=FilterSelector(filter=flt))
+        return n
+
     def migrate_from_sqlite(self, db_path):
         """예전 SQLite activity_embeddings 벡터를 이전 (다시 임베딩하지 않음).
         이미 Qdrant에 데이터가 있으면 아무것도 하지 않는다. 반환: 이전 건수."""
@@ -180,3 +210,42 @@ class ActivityVectorStore:
         for i in range(0, len(items), 256):
             self.upsert(items[i:i + 256])
         return len(items)
+
+
+class WeekSummaryStore(ActivityVectorStore):
+    """주간 요약 벡터 (같은 Qdrant 폴더의 별도 컬렉션, 주당 포인트 1개).
+    활동 벡터는 보관 기간이 지나면 지우지만, 그 주의 요약은 여기 남겨 장기 질의에 쓴다."""
+
+    def __init__(self, path=DEFAULT_PATH, collection=SUMMARY_COLLECTION, vector_size=VECTOR_SIZE):
+        super().__init__(path, collection, vector_size)
+
+    def week_starts(self):
+        """요약이 저장된 주의 시작일('YYYY-MM-DD') 집합"""
+        found, offset = set(), None
+        with self._client() as client:
+            while True:
+                points, offset = client.scroll(
+                    self.collection, limit=1000, offset=offset,
+                    with_payload=["week_start"], with_vectors=False,
+                )
+                found.update(p.payload["week_start"] for p in points)
+                if offset is None:
+                    return found
+
+    def upsert_week(self, week_start, week_end, text, vector):
+        """같은 주는 덮어씀"""
+        payload = {
+            "week_start": week_start, "week_end": week_end, "text": text,
+            "ts": datetime.strptime(week_start, "%Y-%m-%d").timestamp(),
+        }
+        with self._client() as client:
+            client.upsert(self.collection, points=[PointStruct(
+                id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"week|{week_start}")),
+                vector=vector, payload=payload,
+            )])
+
+    def search(self, vector, limit=5, min_score=0.0):
+        """의미가 가까운 주 검색. 반환: [{"score", "week_start", "week_end", "text", "ts"}]"""
+        with self._client() as client:
+            result = client.query_points(self.collection, query=vector, limit=limit, with_payload=True)
+        return [{"score": p.score, **p.payload} for p in result.points if p.score >= min_score]

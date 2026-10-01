@@ -22,6 +22,8 @@ TEMPLATES_DIR = os.path.join(PACKAGE_DIR, "report", "templates")
 DB_PATH = os.path.join(DATA_DIR, "activities.db")
 QDRANT_DIR = os.path.join(DATA_DIR, "qdrant")
 RAG_QUERY_CACHE = os.path.join(DATA_DIR, "rag_topic_queries.json")
+LLM_CACHE = os.path.join(DATA_DIR, "llm_cache.db")
+RETENTION_STATE = os.path.join(DATA_DIR, "retention_state.json")
 
 # logs/
 FILE_ACTIVITY_LOG = os.path.join(LOGS_DIR, "file_activity.log")

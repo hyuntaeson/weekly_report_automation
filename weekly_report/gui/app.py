@@ -8,6 +8,7 @@ WeeklyPulse GUI (Flet) — 앱 뼈대: 창 설정, 사이드바 내비게이션,
   watch_settings.py   Settings 뼈대 + 감시 폴더
   teams_settings.py   Settings > Teams 수집·보고 설정
   report_settings.py  Settings > 보고서 설정 (RAG 주제 질의)
+  storage_settings.py Settings > 저장소 관리 (보관 기간·사용량)
   actions.py          추적·수집·보고서 생성 동작
   widgets.py          공용 컨트롤
 """
@@ -20,6 +21,7 @@ from weekly_report import paths
 from weekly_report.gui.actions import ActionsMixin
 from weekly_report.gui.dashboard import DashboardMixin
 from weekly_report.gui.report_settings import ReportSettingsMixin
+from weekly_report.gui.storage_settings import StorageSettingsMixin
 from weekly_report.gui.teams_settings import TeamsSettingsMixin
 from weekly_report.gui.watch_settings import WatchSettingsMixin
 
@@ -29,7 +31,7 @@ from weekly_report.gui.watch_settings import WatchSettingsMixin
 
 
 class WeeklyPulseApp(DashboardMixin, WatchSettingsMixin, TeamsSettingsMixin,
-                     ReportSettingsMixin, ActionsMixin):
+                     ReportSettingsMixin, StorageSettingsMixin, ActionsMixin):
     """Modern WeeklyPulse-style application with proper sizing"""
 
     def __init__(self, page: ft.Page):
