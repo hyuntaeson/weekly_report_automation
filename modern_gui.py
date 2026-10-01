@@ -857,6 +857,14 @@ class WeeklyPulseApp:
         )
 
         row_width = self.page.window.width - 200 - 60 - 48
+        self.questioner_input = ft.TextField(
+            label="예상질문자",
+            hint_text="Teams에 표시되는 이름 (예: 김영호)",
+            width=row_width - 110,
+            on_submit=self._add_expected_questioner,
+        )
+        self.questioner_chips = ft.Row(spacing=8, run_spacing=8, wrap=True)
+        self._render_expected_questioners()
         self.excluded_chats_list = ft.Column(
             [ft.Text("'채팅방 목록 불러오기'를 누르면 선택할 수 있습니다.",
                      size=12, color=ft.Colors.GREY_500)],
@@ -878,6 +886,30 @@ class WeeklyPulseApp:
                 ft.Row([ft.Text("수집할 채팅 유형", size=13, weight=ft.FontWeight.BOLD)] + checks, spacing=16),
                 check_field("work_only", "업무 관련 메시지만 보고서에 요약 (인사·잡담·비속어 제외, LLM 선별)"),
                 self.teams_scope_dropdown,
+                ft.Container(height=4),
+                ft.Row(
+                    [
+                        self.questioner_input,
+                        ft.Button(
+                            "추가",
+                            icon=ft.Icons.ADD,
+                            style=ft.ButtonStyle(
+                                bgcolor=ft.Colors.BLUE,
+                                color=ft.Colors.WHITE,
+                                padding=14,
+                                shape=ft.RoundedRectangleBorder(radius=8),
+                            ),
+                            on_click=self._add_expected_questioner,
+                        ),
+                    ],
+                    spacing=8,
+                ),
+                ft.Text(
+                    "지정한 사람과의 Teams 대화에서 질문 성향을 학습해, 보고서 STEP 3에 예상 질문과 답변 초안을 만듭니다.",
+                    size=12, color=ft.Colors.GREY_600,
+                ),
+                self.questioner_chips,
+                ft.Container(height=4),
                 ft.Row(
                     [
                         ft.Text("수집 제외할 채팅방", size=13, weight=ft.FontWeight.BOLD),
@@ -923,12 +955,70 @@ class WeeklyPulseApp:
         self._save_teams_settings()
 
     def _save_teams_settings(self):
+        # 읽기(load_teams_settings)와 같은 절대 경로에 저장 — 상대 경로면 다른
+        # 폴더에서 실행했을 때 저장한 설정이 반영되지 않음
+        from teams_collector import SETTINGS_FILE
         try:
-            os.makedirs("config", exist_ok=True)
-            with open("config/teams_settings.json", "w", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.teams_settings, f, indent=2, ensure_ascii=False)
         except Exception as ex:
             print(f"Warning: failed to save teams settings: {ex}")
+
+    def _render_expected_questioners(self):
+        """등록된 예상질문자를 삭제 가능한 칩으로 표시"""
+        names = self.teams_settings.get("expected_questioners", [])
+        if not names:
+            self.questioner_chips.controls = [
+                ft.Text("등록된 예상질문자가 없습니다.", size=12, color=ft.Colors.GREY_500)
+            ]
+            return
+        self.questioner_chips.controls = [
+            ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text(name, size=13, color=ft.Colors.BLUE_900, weight=ft.FontWeight.W_600),
+                        ft.Container(
+                            content=ft.Icon(ft.Icons.CLOSE, size=16, color=ft.Colors.BLUE_900),
+                            tooltip="삭제",
+                            on_click=lambda e, n=name: self._remove_expected_questioner(n),
+                        ),
+                    ],
+                    spacing=6,
+                    tight=True,
+                ),
+                padding=ft.Padding(12, 6, 8, 6),
+                bgcolor=ft.Colors.BLUE_50,
+                border_radius=16,
+                border=ft.Border.all(1, ft.Colors.BLUE_100),
+            )
+            for name in names
+        ]
+
+    def _add_expected_questioner(self, e):
+        name = " ".join((self.questioner_input.value or "").split())
+        if not name:
+            self.show_snack("예상질문자 이름을 입력해주세요")
+            return
+        names = list(self.teams_settings.get("expected_questioners", []))
+        if name in names:
+            self.show_snack("이미 등록된 예상질문자입니다")
+            return
+        names.append(name)
+        self.teams_settings["expected_questioners"] = names
+        self._save_teams_settings()
+        self._render_expected_questioners()
+        self.questioner_input.value = ""
+        self.page.update()
+        self.show_snack(f"예상질문자 추가됨: {name}")
+
+    def _remove_expected_questioner(self, name):
+        names = [n for n in self.teams_settings.get("expected_questioners", []) if n != name]
+        self.teams_settings["expected_questioners"] = names
+        self._save_teams_settings()
+        self._render_expected_questioners()
+        self.page.update()
+        self.show_snack(f"예상질문자 삭제됨: {name}")
 
     def _load_chat_exclusions(self, e):
         """Graph에서 채팅방 목록을 가져와 체크박스로 표시 (백그라운드 — 수 초 소요)"""

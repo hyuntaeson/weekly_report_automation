@@ -530,6 +530,29 @@ def t_integrated_collector():
         return fail(str(e))
 
 
+def t_expected_questioner_settings():
+    """Settings > Teams 예상질문자 추가·중복·빈값·삭제 (실제 설정 파일은 저장하지 않음)"""
+    from types import SimpleNamespace
+    from teams_collector import DEFAULT_SETTINGS
+    from modern_gui import WeeklyPulseApp
+    if DEFAULT_SETTINGS.get("expected_questioners") != []:
+        return fail("기본값 expected_questioners 누락")
+    app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+    app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None)
+    app.show_snack = lambda msg: None
+    app._save_teams_settings = lambda: None
+    app._create_teams_settings_section()
+    app.teams_settings["expected_questioners"] = []
+    for text in ("  김영호 ", "팀장", "김영호", "   "):
+        app.questioner_input.value = text
+        app._add_expected_questioner(None)
+    app._remove_expected_questioner("팀장")
+    names = app.teams_settings["expected_questioners"]
+    if names != ["김영호"] or len(app.questioner_chips.controls) != 1:
+        return fail(f"결과 불일치: {names}")
+    return ok("추가·공백정리·중복/빈값 거부·삭제 정상")
+
+
 # ───────────────────────── 실행 ─────────────────────────
 
 TESTS = [
@@ -575,6 +598,7 @@ TESTS = [
     ("GUI-01", "GUI·실행", "GUI 모듈 임포트", t_flet_import),
     ("GUI-02", "GUI·실행", "프로세스 감지", t_process_detect),
     ("GUI-03", "GUI·실행", "통합 수집기 임포트", t_integrated_collector),
+    ("GUI-04", "GUI·실행", "예상질문자 설정 (추가·삭제)", t_expected_questioner_settings),
 ]
 
 if __name__ == "__main__":

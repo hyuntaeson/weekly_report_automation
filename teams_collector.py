@@ -123,6 +123,8 @@ DEFAULT_SETTINGS = {
     "report_scope": "mine",  # "mine"(내 메시지만) | "all"(주고받은 전체)
     "work_only": True,       # 업무 관련 메시지만 보고서 요약 대상으로 (LLM 선별)
     "excluded_chats": [],    # [{"id": "...", "title": "..."}] — 수집/보고서에서 제외
+    # 보고서 STEP 3 예상 질문용 — Teams 표시 이름(일부 일치)으로 대화 상대를 지정
+    "expected_questioners": [],
 }
 
 
