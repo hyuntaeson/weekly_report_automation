@@ -32,7 +32,7 @@
 - [x] Word/PPT/Excel 파일 내용 변경분 캡처 + 사내 DRM 대응(fallback 메시지)
 - [x] 브라우저 활동 실제 수집 여부 실사용 검증 (2026-09-28 검증 완료 — 확장 설치 후 DB 기록 확인)
 - [x] AI 의미 분석: 임베딩 클러스터링으로 주간 활동을 주제 단위로 자동 분류 (주제별 작업 섹션)
-- [x] 임베딩 영속 저장: `activity_embeddings` 테이블로 벡터 누적 — 재실행 시 캐시 재사용
+- [x] 임베딩 영속 저장: VectorDB(Qdrant)에 벡터 누적 — 재실행 시 캐시 재사용
 - [x] 보고서 생성 LangGraph 파이프라인 (collect→filter→analyze→aggregate→output 노드화)
 - [x] 전체 기능 시나리오 테스트 — Excel 결과 자동 생성 (`tests/scenario_test.py`)
 - [x] GUI 자동 추적 시작 + 시작 시간 최적화 (~10s→~2s)
@@ -42,6 +42,7 @@
 - [x] RAG 주제 질의 요약 (STEP 2) — Settings 주제별 근거 인용 요약, 지난 4주 기록 연결
 - [x] STEP 3 예상 질문 & 답변 — 예상질문자(Teams) 질문 성향 학습 → 예상 Q&A 5개, 근거 없으면 '확인 필요'
 - [x] 보고서 생성 속도 개선(분석 병렬화·LLM 캐시·10분 내 재수집 생략) + 메인 화면 생성 상태 표시(요청 시각·진행 단계·폴더 바로가기)
+- [x] 저장소 보관 정책 — Settings에서 활동 벡터 보관 기간(8~104주) 선택, 지난 주는 주간 요약 벡터로 영구 보관, 현재 사용량·예상 속도 표시
 - [x] macOS 이식 준비 — win32 가드, Outlook은 Graph 폴백으로 플랫폼 무관 수집
 - [ ] Slack Bot Token 발급 및 연동 마무리
 
@@ -64,7 +65,8 @@
 | 통합 수집 시스템 | ✅ 완료 | 주기적 자동 수집, 스레드 기반 |
 | Modern GUI | ✅ 완료 | Flet 기반 UI — 추적 자동 시작, Weekly Summary + Generate Report 단일 CTA, 실시간 프로세스 감지 |
 | AI 의미 분석 | ✅ 완료 | 임베딩 클러스터링 → 보고서 "주제별 작업" 섹션 (흩어진 활동을 주제로 묶음) |
-| 임베딩 캐시 | ✅ 완료 | `activity_embeddings` 테이블, 2회차 보고서 생성 시 재계산 불필요 |
+| 임베딩 캐시 | ✅ 완료 | VectorDB(Qdrant)에 누적, 2회차 보고서 생성 시 재계산 불필요 |
+| 저장소 보관 정책 | ✅ 완료 | 활동 벡터는 보관 기간(Settings)만, 지난 주는 주간 요약 벡터로 영구 보관 — 원본 활동은 유지 |
 | LangGraph 파이프라인 | ✅ 완료 | 보고서 생성을 노드/엣지 그래프로 — 활동 없으면 분석 스킵 분기 |
 | macOS 이식 | ✅ 코드 준비 | win32 가드, Outlook Graph 폴백 (맥에서 실기 검증 필요) |
 | Teams 사용자 설정 | ✅ 완료 | Settings 화면에서 수집 기간/채팅 유형/제외 채팅방/보고서 범위/업무만 요약 선택 |
@@ -110,7 +112,8 @@ weekly_report_automation/
 │   │   └── integrated.py         # 통합 수집기 (상시 감시 + 보고서 직전 1회 수집)
 │   ├── storage/
 │   │   ├── database.py           # SQLite 활동 DB (upsert, 요약 캐시)
-│   │   └── vector_store.py       # Qdrant 로컬 VectorDB (활동 임베딩 + 메타데이터 필터 검색)
+│   │   ├── vector_store.py       # Qdrant 로컬 VectorDB (활동 임베딩 + 메타데이터 필터 검색, 주간 요약)
+│   │   └── retention.py          # 저장소 보관 정책 (요약 저장 후 지난 벡터 정리, 사용량 측정)
 │   ├── ai/
 │   │   ├── llm_summarizer.py     # 사내 LiteLLM Proxy 요약기 (LCEL 체인, 소스별 프롬프트)
 │   │   ├── clusterer.py          # 임베딩 의미 클러스터링 → "주제별 작업"
@@ -129,10 +132,11 @@ weekly_report_automation/
 │       ├── watch_settings.py     # Settings 뼈대 + 감시 폴더
 │       ├── teams_settings.py     # Settings > Teams 수집·보고 설정
 │       ├── report_settings.py    # Settings > 보고서 설정 (RAG 주제 질의)
+│       ├── storage_settings.py   # Settings > 저장소 관리 (보관 기간·사용량)
 │       ├── actions.py            # 추적·수집·보고서 생성 동작
 │       └── widgets.py            # 공용 컨트롤
 ├── tests/
-│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (45건 → test_reports/*.xlsx)
+│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (47건 → test_reports/*.xlsx)
 │   └── legacy/                   # 구버전 테스트 (test_all_completed 등)
 ├── scripts/
 │   ├── cleanup_data.py           # data/ 테스트 산출물 정리
@@ -200,8 +204,10 @@ python tests/scenario_test.py
 ### file_stats 테이블
 - 파일 타입별 통계 데이터
 
-### activity_embeddings 테이블
-- 활동별 임베딩 벡터 저장 (의미 클러스터링·유사 과거 작업 검색용, JSON 벡터)
+### VectorDB (Qdrant 로컬, `data/qdrant/`)
+- `activities` 컬렉션: 활동별 임베딩(3072차원) + 소스·날짜·발신자 메타데이터 — 보관 기간(Settings, `config/report_settings.json`의 `vector_retention_weeks`)이 지난 주는 삭제
+- `week_summaries` 컬렉션: 주당 1개, STEP 2 요약 임베딩 — 영구 보관, 장기 질의용
+- (레거시 SQLite `activity_embeddings` 테이블은 Qdrant 이전 후 저장소 정리 때 삭제됨)
 
 ## 👥 다른 사용자에게 배포할 때
 
