@@ -620,6 +620,41 @@ def t_cluster_topics():
     return ok(f"{len(topics)}개 주제 — 예: {', '.join(names)}")
 
 
+def t_topic_examples():
+    """주제별 작업: 예시는 짧은 이름(채팅방·페이지 제목·파일명, 임시 파일 제외), '개인'으로 판정된 주제는 제외"""
+    import json as _json
+    from weekly_report.ai.clusterer import ActivityClusterer
+    label = ActivityClusterer._example_label
+    cases = [
+        ({"source": "teams", "file_path": "Teams 채팅: ★공유방 - 홍수빈(POS) - 팀",
+          "details": _json.dumps({"chat": "★공유방", "sender": "홍수빈"})}, "★공유방"),
+        ({"source": "browser", "file_path": "https://www.google.com/search?q=%EA%B5%AC", "details": "{}"}, "www.google.com"),
+        ({"source": "browser", "file_path": "https://confl.sinc.co.kr/x", "details": _json.dumps({"title": "POS 결제수단 현황"})},
+         "POS 결제수단 현황"),
+        ({"source": "filesystem", "file_path": "C:\\01.AI\\Data\\pay_h060_result.txt", "details": "{}"}, "pay_h060_result.txt"),
+        ({"source": "filesystem", "file_path": "C:\\01.AI\\Data\\check.py.tmp.34680", "details": "{}"}, None),
+        ({"source": "filesystem", "file_path": "C:\\01.AI\\a.html.tmp.34680.8421e26c67b5", "details": "{}"}, None),
+        ({"source": "outlook", "file_path": "Meeting: x", "details": _json.dumps({"subject": "DevX 교육"})}, "DevX 교육"),
+    ]
+    wrong = [(c[0]["file_path"], label(c[0]), c[1]) for c in cases if label(c[0]) != c[1]]
+    if wrong:
+        return fail(f"예시 이름 오류: {wrong}")
+    cl = ActivityClusterer.__new__(ActivityClusterer)
+    acts = [{"source": "teams", "file_path": f"Teams 채팅: 방{i}", "details": "{}"} for i in range(4)]
+    cl.cluster_activities = lambda a: [{"items": acts[:2]}, {"items": acts[2:]}]
+    names = iter(["10월 배포 준비", "개인"])
+    cl.name_cluster = lambda items: next(names)
+    topics = cl.build_topics(acts)
+    if [t["name"] for t in topics] != ["10월 배포 준비"]:
+        return fail(f"개인 주제 제외 실패: {topics}")
+    names = iter(["POS 운영", "POS 운영"])
+    acts2 = [{"source": "teams", "file_path": "x", "details": _json.dumps({"chat": f"방{i}"})} for i in range(4)]
+    cl.cluster_activities = lambda a: [{"items": acts2[:2]}, {"items": acts2[2:]}]
+    if [t["name"] for t in cl.build_topics(acts2)] != ["POS 운영 (방0)", "POS 운영 (방2)"]:
+        return fail("같은 이름 주제 구분 실패")
+    return ok("채팅방·페이지 제목(없으면 사이트)·파일명·회의 제목으로 표시, 임시 파일 제외, '개인' 주제 제외, 같은 이름 구분")
+
+
 def t_langchain_present():
     try:
         import langchain_core, langchain_openai, langgraph  # noqa
@@ -953,6 +988,17 @@ def t_llm_output_check():
         return fail(f"사실 대조 표시 오류: {judged}")
     if fact_check_answers(answers, texts, lambda s, b: "") != [a for a, _ in answers]:
         return fail("판정 실패 시 원본 유지 안 됨")
+    # 성과 수치 측정 기준 표시 (정답셋 G09): 성과 수치 + 근거에 측정 기준 없음 → 표시, 일반 수치·측정 기준 있음 → 그대로
+    from weekly_report.ai.questions import MEASURE_CAVEAT, add_measure_caveat
+    perf = "레거시 분석 60~80% 단축, 재작업 비용 50% 이상 감소했습니다. [1]"
+    cases = [(perf, ["생산성 효과: 레거시 분석 60~80% 단축"], True),
+             (perf, ["측정 기준: 2025년 동일 규모 프로젝트 대비 실측"], False),
+             ("테스트 시나리오 작성이 수시간→수십분으로 줄었습니다. [2]", ["수시간→수십분"], True),
+             ("KICC TID는 7054576이고 세종 프리픽스는 30입니다. [3]", ["TID 7054576"], False),
+             ("60% 단축했으나 측정 기준은 확인 필요합니다. [1]", [""], False)]
+    for answer, texts, expect in cases:
+        if add_measure_caveat(answer, texts).endswith(MEASURE_CAVEAT) != expect:
+            return fail(f"측정 기준 표시 오류: {answer} / {texts}")
     # '확인 필요'만 남은 답변 → 질문과 가장 가까운 보고 내용으로 채움
     from weekly_report.ai.questions import fill_bare_answers, is_bare_answer
     if not is_bare_answer("확인 필요 (보고 내용)") or is_bare_answer("개발 완료, 일정은 확인 필요 [1]"):
@@ -975,7 +1021,7 @@ def t_llm_output_check():
             or qa[2][1] != "확인 필요"):
         return fail(f"STEP 3 근거 표시 오류: {qa}")
     return ok("요약 거절·되묻기 재요청→실패 시 None·캐시 안 함, 서두 제거, 업무 문장 오탐 없음, "
-              "무관한 근거 번호 제거(애매하면 핵심어 확인), 답변-근거 사실 대조 표시, 질문별 근거 재답변, '(보고 내용)'·'(확인 필요)' 표시")
+              "무관한 근거 번호 제거(애매하면 핵심어 확인), 답변-근거 사실 대조 표시, 질문별 근거 재답변, 성과 수치 측정 기준 표시, '(보고 내용)'·'(확인 필요)' 표시")
 
 
 def t_rag_sections():
@@ -1135,6 +1181,7 @@ TESTS = [
 
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
+    ("AI-11", "AI 분석", "주제별 작업 예시 이름·개인 주제 제외", t_topic_examples),
     ("AI-03", "AI 분석", "LangChain/LangGraph 임포트", t_langchain_present),
     ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
     ("AI-08", "AI 분석", "근거 노이즈 필터 (IDE·제외 키워드·이름뿐인 기록)", t_evidence_noise_filter),

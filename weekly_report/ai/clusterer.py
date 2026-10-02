@@ -12,6 +12,7 @@
 
 import json
 import math
+import re
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -225,6 +226,36 @@ class ActivityClusterer:
         fallback = (items[0].get("file_path") or "기타").split(":")[-1].strip()
         return fallback[:30] or "기타"
 
+    @staticmethod
+    def _example_label(item):
+        """주제 예시로 보일 짧은 이름 — Teams는 채팅방, 웹은 페이지 제목(없으면 사이트), 회의·메일은 제목,
+        파일은 파일 이름. 원시 경로·URL·'Teams 채팅: 방 - 보낸 사람' 문자열을 그대로 늘어놓지 않는다.
+        임시 파일(.tmp·~$)은 None."""
+        from urllib.parse import urlparse
+        from weekly_report.report.sections import clean_text
+
+        details = item.get("details")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except (TypeError, ValueError):
+                details = {}
+        details = details if isinstance(details, dict) else {}
+        path = str(item.get("file_path") or "").strip()
+        source = item.get("source")
+        if source == "teams":
+            name = details.get("chat") or details.get("subject") or path.split(":", 1)[-1].split(" - ")[0]
+        elif source == "browser" or path.startswith("http"):
+            name = details.get("title") or urlparse(path).netloc
+        elif details.get("subject"):
+            name = details["subject"]
+        else:
+            base = re.split(r"[\\/]", path.rstrip("\\/"))[-1]
+            if re.search(r"\.tmp(\.|$)|^~\$", base, re.I):  # check.py.tmp.34680.9a09… 같은 원자적 저장 임시 파일
+                return None
+            name = details.get("title") or base or path
+        return clean_text(name) or None
+
     def build_topics(self, activities, min_cluster_size=2):
         """보고서용 주제 목록 생성.
         반환: [{"name", "count", "examples": [str...]}] 건수 내림차순."""
@@ -237,17 +268,22 @@ class ActivityClusterer:
             names = list(pool.map(lambda c: self.name_cluster(c["items"]), clusters))
         topics = []
         for cluster, name in zip(clusters, names):
+            if name.strip().strip("'\"").startswith("개인"):
+                continue  # 업무와 무관한 개인 활동(가족 검색 등)은 보고서에 넣지 않는다
             items = cluster["items"]
             examples = []
-            seen = set()
             for item in items:
-                label = str(item.get("file_path") or "").strip()
-                if label and label not in seen:
-                    seen.add(label)
-                    examples.append(label[:60])
+                label = self._example_label(item)
+                if label and label not in examples:
+                    examples.append(label)
                 if len(examples) >= 3:
                     break
             topics.append(
                 {"name": name, "count": len(items), "examples": examples}
             )
+        # 이름이 겹치는 주제(LLM이 비슷한 클러스터에 같은 이름을 붙임)는 대표 예시로 구분
+        names = [t["name"] for t in topics]
+        for t in topics:
+            if names.count(t["name"]) > 1 and t["examples"]:
+                t["name"] = f"{t['name']} ({t['examples'][0]})"
         return topics

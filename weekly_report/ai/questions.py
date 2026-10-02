@@ -58,6 +58,8 @@ ANSWER_RULES = (
     "  ② 질문이 묻는 것 중 자료로 확인되지 않는 부분(원인·일정·결과 등)만 '~는 확인 필요'로 덧붙인다. "
     "지어내지 않는다. '확인 필요'만 단독으로 쓰지 않는다 — 자료에 관련 내용이 조금이라도 있으면 그것부터 답한다.\n"
     "  ③ 끝에 출처: <evidence>에 실제로 적힌 사실이면 [1][3]처럼 그 번호, <evidence>에는 없고 <report>에만 있으면 (보고 내용).\n"
+    "  성과·효과 수치(단축률·개선율·절감액·향상 폭 등)는 근거의 수치를 그대로 쓰되, 근거에 측정 기준이나 "
+    "실측/추정 여부가 없으면 '측정 기준·실측 여부는 확인 필요'를 덧붙인다 (코드·값·일정 같은 일반 수치에는 붙이지 않는다).\n"
     "  '(지난 보고)' 근거는 AI가 만든 지난주 보고서 요약(2차 자료)이다 — 같은 사실의 원본 근거가 있으면 원본 번호를 달고, "
     "지난 보고로만 확인되는 사실은 문장에 '(지난 보고 기준)'을 붙인다.\n"
     "  <report>에서 '(근거 기록 없음)' 표시된 항목에 대한 질문은 <evidence>를 쓰지 말고 보고 내용으로만 답한다 "
@@ -193,6 +195,25 @@ def _take_refs(text, pattern, count):
     """text에서 pattern 번호들을 떼어 (정리된 text, 범위 안 번호 목록)"""
     refs = [n for n in dict.fromkeys(int(m) for m in re.findall(pattern, text)) if 1 <= n <= count]
     return re.sub(r"\s{2,}", " ", re.sub(pattern, "", text)).strip(), sorted(refs)
+
+
+# 성과·효과 수치 ('60~80% 단축', '50% 이상 감소', '수시간→수십분으로 단축') — 측정 기준 없이 쓰면 실측처럼 읽힘
+_PERFORMANCE_RE = re.compile(
+    r"\d[\d~.,]*\s*(%|퍼센트|배|시간|분|일|건)\s*(이상|이하|가량|정도)?\s*(단축|감소|절감|향상|개선|증가|줄)|"
+    r"\d[\d~.,]*\s*(%|퍼센트)|→\s*\S*(분|시간|일)")
+_MEASURE_BASIS_RE = re.compile(r"측정\s*(기준|방법|방식)|실측|측정치|산출\s*(기준|방법)|기준\s*[:：]|비교\s*기준")
+MEASURE_CAVEAT = "(측정 기준·실측 여부 확인 필요)"
+
+
+def add_measure_caveat(answer, cited_texts):
+    """성과·효과 수치를 답했는데 인용 근거에 측정 기준·실측 여부가 없으면 '(측정 기준·실측 여부 확인 필요)'를 붙인다.
+    프롬프트 규칙만으로는 생성 모델이 자주 빠뜨려서(정답셋 G09) 결정적 규칙으로 보강 — 표시만 하고 내용은 고치지 않는다."""
+    body = re.sub(r"\[\d+\]", "", answer or "")
+    if not _PERFORMANCE_RE.search(body) or "측정" in body or "실측" in body:
+        return answer
+    if any(_MEASURE_BASIS_RE.search(t or "") for t in cited_texts):
+        return answer
+    return f"{answer} {MEASURE_CAVEAT}"
 
 
 def is_bare_answer(answer):
@@ -462,6 +483,10 @@ class ExpectedQuestions:
             # 판정마다 짧은 이유를 쓰므로 답변 5개 기준으로 넉넉히
             lambda system, body: self.rag.judge_llm.complete(system, body, max_tokens=600, max_input=40000,
                                                        temperature=0, cache=True))
+        # 성과 수치에 측정 기준이 없으면 표시 (근거 원문 전체에서 측정 기준을 찾음)
+        texts = self.rag.evidence_texts(evidence)
+        answers = [add_measure_caveat(a, [texts.get(n) for n in refs])
+                   for a, (_, _, refs, _) in zip(answers, pairs)]
         answers = fill_bare_answers([q for q, _, _, _ in pairs], answers, points, point_vectors,
                                     self.rag.clusterer.embed)
         pairs = [(q, a2, refs if not is_bare_answer(a) else [], prefs)
