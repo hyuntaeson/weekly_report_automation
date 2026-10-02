@@ -33,8 +33,8 @@
 
 ## 검증
 
-- 기능 테스트: `python tests/scenario_test.py` (52건, 결과는 `test_reports/*.xlsx`)
-- STEP 3 품질: `python tests/eval_step3.py --label 이름` (정답셋 `data/eval/gold.json`, 약 3분) — 근거·답변 관련 변경은 전후 수치 비교, 2회 이상 평균
+- 기능 테스트: `python tests/scenario_test.py` (53건, 결과는 `test_reports/*.xlsx`)
+- STEP 3 품질: `python tests/eval_step3.py --label 이름` (정답셋 `data/eval/gold.json`, 약 3분) — 근거·답변 관련 변경은 전후 수치 비교, 4회 평균 (같은 설정도 ±0.03~0.07 흔들림)
 - 구버전 통합 테스트: `python tests/legacy/test_all_completed.py`
 - 테스트에서 보고서를 만들 때는 `output_dir="test_reports"` 지정 — `reports/`에 쓰지 않는다
 - 임시 스크립트는 `_tmp_*.py`로 만들고 작업 후 삭제. 남기려면 tests/ 개념으로 정리
