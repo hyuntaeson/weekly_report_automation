@@ -655,6 +655,25 @@ def t_topic_examples():
     return ok("채팅방·페이지 제목(없으면 사이트)·파일명·회의 제목으로 표시, 임시 파일 제외, '개인' 주제 제외, 같은 이름 구분")
 
 
+def t_issues_parse():
+    """STEP 2 이슈·리스크/다음 주 계획 하네스: 형식·인용 없는 줄 버림, 구분 검증, 이미 지난 일정 제외"""
+    from datetime import date
+    from weekly_report.ai.issues import drop_past_plans, parse_issue_output, plan_dates
+    output = ("[이슈·리스크]\n장애 | 거래저장 실패 점포 — 누락 매출 2건 | 하드 교체 후 수기 입력 [2]\n"
+              "이슈 | 국민QR 환불 시 결제바코드로도 환불 가능 | KIS 회신 대기 [1][9]\n"
+              "기타 | 잘못된 구분 | 확인 필요 [3]\n리스크 | 인용 없는 행 | 확인 필요\n"
+              "[다음 주 계획]\n- 10월1차 순차 배포 모니터링 (~10/06) [3]\n- 직영 전체점 정기배포 (10/01) [4]\n- 없음")
+    issues, plans = parse_issue_output(output, evidence_count=5)
+    if [(i["type"], i["refs"]) for i in issues] != [("장애", [2]), ("이슈", [1])]:
+        return fail(f"이슈 파싱 오류: {issues}")
+    if plan_dates("배포 (10월 1일 02:00) 및 10/06 점검", 2026) != [date(2026, 10, 1), date(2026, 10, 6)]:
+        return fail("날짜 인식 오류")
+    kept = drop_past_plans(plans, date(2026, 10, 2))
+    if [p["text"] for p in kept] != ["10월1차 순차 배포 모니터링 (~10/06)"]:
+        return fail(f"지난 일정 제외 오류: {kept}")
+    return ok("구분·인용 없는 행 제외, 없는 근거 번호 제거, 날짜 인식(10/06·10월 1일), 이미 지난 일정 제외")
+
+
 def t_langchain_present():
     try:
         import langchain_core, langchain_openai, langgraph  # noqa
@@ -1182,6 +1201,7 @@ TESTS = [
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
     ("AI-11", "AI 분석", "주제별 작업 예시 이름·개인 주제 제외", t_topic_examples),
+    ("AI-12", "AI 분석", "STEP 2 이슈·리스크/다음 주 계획 하네스", t_issues_parse),
     ("AI-03", "AI 분석", "LangChain/LangGraph 임포트", t_langchain_present),
     ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
     ("AI-08", "AI 분석", "근거 노이즈 필터 (IDE·제외 키워드·이름뿐인 기록)", t_evidence_noise_filter),

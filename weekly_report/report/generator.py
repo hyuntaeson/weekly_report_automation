@@ -83,24 +83,30 @@ class ReportGenerator:
         # 파트원만 수정한 공유 문서는 내 업무가 아니므로 주제 분석에서 제외
         my_activities = [a for a in activities if is_my_work(a, me_name)]
         # 서로 독립인 분석(대부분 LLM 응답 대기)은 동시에 — 차례로 돌리면 시간이 합으로 늘어남
-        self._report_progress("AI 분석 중 (Teams 요약 · 주제 분류 · 핵심 요약 · 주제 질의)")
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        self._report_progress("AI 분석 중 (Teams 요약 · 주제 분류 · 핵심 요약 · 주제 질의 · 이슈·계획)")
+        with ThreadPoolExecutor(max_workers=5) as pool:
             teams_my = pool.submit(self._summarize_my_teams_messages, activities)
             topics = pool.submit(self._cluster_topics, my_activities)
             week_summary = pool.submit(self._summarize_week, self.build_program_sections(activities))
             rag_sections = pool.submit(self._rag_sections, activities, week_start, week_end)
+            issues_plan = pool.submit(self._issues_and_plan, activities, week_start, week_end)
             week_summary, rag_sections = week_summary.result(), rag_sections.result()
+            issues_plan = issues_plan.result() or {}
             # STEP 3은 STEP 2 결과(핵심 요약·주제 질의 요약)를 '보고 내용'으로 삼는다 —
             # 이 둘이 끝나는 대로 시작해서 Teams 요약·주제 분류와 겹쳐 돌린다
             self._report_progress("AI 분석 중 (예상 질문 생성)")
+            # 이슈·계획도 '보고 내용' — 상사는 이슈 상태·다음 주 일정을 자주 묻는다
             report_points = list(week_summary or []) + [
                 f"{s['topic']}: {b}" for s in rag_sections for b in s["bullets"]
+            ] + [f"{i['type']}: {i['content']} (상태: {i['status']})" for i in issues_plan.get("issues", [])] + [
+                f"다음 주 계획: {p['text']}" for p in issues_plan.get("plans", [])
             ]
             expected_qa = self._expected_questions(activities, week_start, week_end, report_points)
             return {
                 "teams_my": teams_my.result(),
                 "topics": topics.result(),
                 "rag_sections": rag_sections,
+                "issues_plan": issues_plan,
                 "week_summary": week_summary,
                 "expected_qa": expected_qa,
             }
@@ -149,6 +155,9 @@ class ReportGenerator:
             ),
             "topics": extras.get("topics") or [],
             "rag_sections": extras.get("rag_sections") or [],
+            "issues": (extras.get("issues_plan") or {}).get("issues") or [],
+            "plans": (extras.get("issues_plan") or {}).get("plans") or [],
+            "issue_evidence": (extras.get("issues_plan") or {}).get("evidence") or [],
             "expected_qa": extras.get("expected_qa") or [],
         }
 
@@ -568,6 +577,17 @@ class ReportGenerator:
         except Exception as e:
             print(f"Warning: topic clustering failed: {e}")
             return []
+
+    def _issues_and_plan(self, activities, week_start, week_end):
+        """STEP 2 '주요 이슈 & 리스크'·'다음 주 계획' (ai/issues.py). 실패·근거 없음이면 None (섹션 생략)."""
+        if not week_start or not week_end:
+            return None
+        try:
+            from weekly_report.ai.issues import IssuesAndPlan
+            return IssuesAndPlan(self, paths.LITELLM_CONFIG).build(activities, week_start, week_end)
+        except Exception as e:
+            print(f"Warning: issues/plan failed: {e}")
+            return None
 
     def _rag_sections(self, activities, week_start, week_end):
         """Settings의 주제별로 VectorDB 검색 → 근거 인용 요약 (rag.py).

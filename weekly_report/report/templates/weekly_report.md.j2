@@ -47,6 +47,32 @@
 {% for line in week_summary %}
 - {{ line }}
 {% endfor %}
+{% if issues or plans %}
+
+### 주요 이슈 & 리스크
+{% if issues %}
+
+| 구분 | 내용 | 상태 |
+|---|---|---|
+{% for i in issues %}
+| {{ i.type }} | {{ i.content|replace("|", "/") }} {% for n in i.refs %}[{{ n }}]{% endfor %} | {{ i.status|replace("|", "/") }} |
+{% endfor %}
+{% else %}
+- 이번 주 기록된 장애·이슈 없음
+{% endif %}
+
+### 다음 주 계획
+{% if plans %}
+{% for p in plans %}
+- {{ p.text }} {% for n in p.refs %}[{{ n }}]{% endfor %}
+
+{% endfor %}
+{% else %}
+- 기록에서 확인된 다음 주 일정 없음
+{% endif %}
+
+<sub>근거{% for e in issue_evidence %}<br>[{{ e.n }}] {{ e.label }}{% endfor %}</sub>
+{% endif %}
 {% if topics %}
 
 ### 주제별 작업
