@@ -18,6 +18,7 @@ from weekly_report.collectors.ai_tool import AIToolCollector
 from weekly_report.collectors.confluence import ConfluenceCollector
 from weekly_report.collectors.teams import TeamsCollector
 from weekly_report.collectors.onenote import OneNoteCollector
+from weekly_report.collectors.project_docs import ProjectDocsCollector
 from weekly_report.collectors.sharepoint import SharePointCollector
 from weekly_report.storage.database import ActivityDatabase
 from weekly_report.collectors.browser_server import BrowserActivityServer
@@ -63,6 +64,7 @@ class IntegratedCollector:
         self.teams_collector = TeamsCollector(db_path)
         self.onenote_collector = OneNoteCollector(db_path)
         self.sharepoint_collector = SharePointCollector(db_path)
+        self.project_docs_collector = ProjectDocsCollector(db_path)  # 근거 전용 (STEP 1에는 안 나옴)
 
         # Browser activity server (optional)
         self.browser_server = None
@@ -357,6 +359,8 @@ class IntegratedCollector:
                     self.ide_collector.collect_all_ide_activity(days=days))),
                 ("Confluence", lambda: self.confluence_collector.save_to_database(
                     self.confluence_collector.collect_all_confluence_activity(days=days))),
+                ("프로젝트 문서", lambda: self.project_docs_collector.save_to_database(
+                    self.project_docs_collector.collect())),
             ],
         ]
         results = {}

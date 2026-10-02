@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
 from weekly_report import paths
-from weekly_report.ai.rag import TopicQueryRAG, _cosine, check_citations, evidence_label
+from weekly_report.ai.rag import TopicQueryRAG, _cosine, check_citations, evidence_full_text, evidence_label
 from weekly_report.common.timeutil import to_local_datetime
 from weekly_report.report.sections import clean_text, condense
 from weekly_report.storage.database import ActivityDatabase
@@ -53,11 +53,13 @@ STYLE_PROMPT = (
     "그 외 설명은 쓰지 마."
 )
 ANSWER_RULES = (
-    "- 답변은 보고체로 1~2문장. 반드시 이 순서로 쓴다:\n"
+    "- 답변은 보고체로, 질문이 묻는 것을 빠짐없이 답하되 간결하게 (보통 2~4문장). 반드시 이 순서로 쓴다:\n"
     "  ① <evidence>·<report>로 알 수 있는 현재 상태를 먼저 구체적으로 쓴다 (무엇을 어디까지 했는지, 수치·일정 포함).\n"
     "  ② 질문이 묻는 것 중 자료로 확인되지 않는 부분(원인·일정·결과 등)만 '~는 확인 필요'로 덧붙인다. "
     "지어내지 않는다. '확인 필요'만 단독으로 쓰지 않는다 — 자료에 관련 내용이 조금이라도 있으면 그것부터 답한다.\n"
     "  ③ 끝에 출처: <evidence>에 실제로 적힌 사실이면 [1][3]처럼 그 번호, <evidence>에는 없고 <report>에만 있으면 (보고 내용).\n"
+    "  '(지난 보고)' 근거는 AI가 만든 지난주 보고서 요약(2차 자료)이다 — 같은 사실의 원본 근거가 있으면 원본 번호를 달고, "
+    "지난 보고로만 확인되는 사실은 문장에 '(지난 보고 기준)'을 붙인다.\n"
     "  <report>에서 '(근거 기록 없음)' 표시된 항목에 대한 질문은 <evidence>를 쓰지 말고 보고 내용으로만 답한다 "
     "(단어가 비슷한 다른 업무 기록을 끌어오지 않는다).\n"
     "  예) A: 프로그램 개발은 완료됐고 테스트 장비는 9월 초 제공 예정으로 문서에 반영돼 있습니다. 실제 장비 수령·테스트 착수 여부는 확인 필요합니다. [2]\n"
@@ -83,6 +85,13 @@ REANSWER_PROMPT = (
     "너는 주간 업무 보고를 준비하는 담당자의 비서야. 아래 질문마다, 그 질문 바로 밑의 근거와 <report>만 보고 "
     "답변을 다시 써.\n" + ANSWER_RULES +
     "- 출력은 질문마다 한 줄: 'A1: 답변 [번호]' 형식. 번호는 그 질문 밑에 있는 근거 번호만 쓴다. 그 외 설명은 쓰지 마."
+)
+
+
+FIXED_ANSWER_PROMPT = (
+    "너는 주간 업무 보고를 준비하는 담당자의 비서야. 상사의 아래 질문마다 <evidence>와 <report>만 보고 답변을 써.\n"
+    + ANSWER_RULES +
+    "- 출력은 질문마다 한 줄: 'A1: 답변 [번호]' 형식. 그 외 설명은 쓰지 마."
 )
 
 
@@ -420,7 +429,7 @@ class ExpectedQuestions:
                     if not when:
                         continue
                     evidence.append({"label": evidence_label(a, when), "activity": a,
-                                     "text": clean_text(self.rag.clusterer._activity_text(a), 300)})
+                                     "text": evidence_full_text(a)})
                     index[k] = len(evidence)
                 numbers.append(index[k])
             if numbers and numbers[0] not in refs:  # 가장 맞는 근거를 인용하지 않은 답변만
@@ -432,10 +441,62 @@ class ExpectedQuestions:
                 f"[{n}] {evidence[n - 1]['label']} | {evidence[n - 1]['text']}" for n in numbers)
                 or "(없음 — 근거 기록이 없는 보고 항목이므로 <report> 내용으로만 답하고 끝에 (보고 내용))")
             for qi, numbers in targets.items())
-        output = self.rag.llm.complete(REANSWER_PROMPT, body, max_tokens=1500, max_input=12000, temperature=0)
+        output = self.rag.llm.complete(REANSWER_PROMPT, body, max_tokens=2000, max_input=60000, temperature=0)
         redone = parse_reanswers(output, {qi: set(numbers) for qi, numbers in targets.items()})
         return [(q, *redone[qi], prefs) if qi in redone else (q, a, refs, prefs)
                 for qi, (q, a, refs, prefs) in enumerate(pairs, start=1)], evidence
+
+    def _finalize_answers(self, points, point_vectors, point_has_evidence, pairs, evidence):
+        """답변 후처리 하네스 (예상 질문 생성·정답셋 평가 공통): 2단계 근거 보강·재답변 → 근거 관련성 검사 →
+        사실 대조(표시만) → '확인 필요'만 남은 답변 폴백. 반환: (pairs, evidence)"""
+        pairs, evidence = self._add_question_evidence(points, point_vectors, point_has_evidence, pairs, evidence)
+        # 답변 내용과 무관한 근거 번호는 지우고, 남은 근거가 없으면 '(확인 필요)' 표시 (rag와 같은 하네스)
+        checked = check_citations([(a, refs) for _, a, refs, _ in pairs],
+                                  self.rag.evidence_vectors(evidence), self.rag.clusterer.embed,
+                                  evidence_texts=self.rag.evidence_texts(evidence))
+        pairs = [(q, a2 if refs2 else mark_unsupported(a2), refs2, prefs)
+                 for (q, _, _, prefs), (a2, refs2) in zip(pairs, checked)]
+        # 근거 문서는 맞는데 그 안의 사실을 틀리게 말한 답변(예: '정산용' 구분자를 '운임 계산용'으로) — 표시만
+        answers = fact_check_answers(
+            [(a, refs) for _, a, refs, _ in pairs], self.rag.evidence_texts(evidence),
+            # 판정마다 짧은 이유를 쓰므로 답변 5개 기준으로 넉넉히
+            lambda system, body: self.rag.judge_llm.complete(system, body, max_tokens=600, max_input=40000,
+                                                       temperature=0, cache=True))
+        answers = fill_bare_answers([q for q, _, _, _ in pairs], answers, points, point_vectors,
+                                    self.rag.clusterer.embed)
+        pairs = [(q, a2, refs if not is_bare_answer(a) else [], prefs)
+                 for (q, a, refs, prefs), a2 in zip(pairs, answers)]
+        return pairs, evidence
+
+    def _evidence_from_hits(self, week_hits):
+        """보고 항목별 검색 결과 → 근거 목록 (중복 제거, 순서 유지)"""
+        evidence, seen = [], set()
+        for hits in week_hits:
+            for _, a in hits:
+                k = ActivityDatabase.activity_key(a)
+                when = to_local_datetime(a.get("timestamp"), a.get("source"))
+                if k in seen or not when:
+                    continue
+                seen.add(k)
+                evidence.append({"label": evidence_label(a, when), "activity": a,
+                                 "text": evidence_full_text(a)})
+        return evidence
+
+    def answer_questions(self, questions, points, point_vectors, week_hits):
+        """주어진 질문에 답한다 (정답셋 회귀 평가용) — 질문만 고정이고 근거 검색·답변 규칙·후처리는 예상 질문과 같다.
+        반환: [{"q", "a", "evidence": [activity...]}] (답변이 인용한 근거)"""
+        evidence = self._evidence_from_hits(week_hits)
+        point_has_evidence = [bool(h) for h in week_hits]
+        body = ("<report>\n" + "\n".join(f"- {p}" + ("" if ok else " (근거 기록 없음)")
+                                         for p, ok in zip(points, point_has_evidence)) + "\n</report>\n<evidence>\n"
+                + "\n".join(f"[{i}] {e['label']} | {e['text']}" for i, e in enumerate(evidence, start=1))
+                + "\n</evidence>\n\n" + "\n".join(f"Q{i}: {q}" for i, q in enumerate(questions, start=1)))
+        output = self.rag.llm.complete(FIXED_ANSWER_PROMPT, body, max_tokens=4000, max_input=80000, temperature=0)
+        every = set(range(1, len(evidence) + 1))
+        answered = parse_reanswers(output, {i: every for i in range(1, len(questions) + 1)})
+        pairs = [(q, *answered.get(i, ("확인 필요", [])), []) for i, q in enumerate(questions, start=1)]
+        pairs, evidence = self._finalize_answers(points, point_vectors, point_has_evidence, pairs, evidence)
+        return [{"q": q, "a": a, "evidence": [evidence[n - 1]["activity"] for n in refs]} for q, a, refs, _ in pairs]
 
     def _build_one(self, name, messages, points, point_vectors, week_hits, week_start):
         profile = self.style_profile(name, messages)
@@ -447,16 +508,7 @@ class ExpectedQuestions:
         past = [m for m, _ in matches]
 
         # 이번 주 내 활동 = 답변의 사실 근거 [n]
-        evidence, seen = [], set()
-        for hits in week_hits:
-            for _, a in hits:
-                k = ActivityDatabase.activity_key(a)
-                when = to_local_datetime(a.get("timestamp"), a.get("source"))
-                if k in seen or not when:
-                    continue
-                seen.add(k)
-                evidence.append({"label": evidence_label(a, when), "activity": a,
-                                 "text": clean_text(self.rag.clusterer._activity_text(a), 300)})
+        evidence = self._evidence_from_hits(week_hits)
         # 상사의 과거 발언 = 질문의 맥락 [P#] (사실 근거 아님)
         past_lines = []
         for i, m in enumerate(past, start=1):
@@ -479,30 +531,14 @@ class ExpectedQuestions:
             style="\n".join(f"- {s}" for s in profile["style"]) or "- (분석 자료 부족)",
             examples="\n".join(f'- "{e}"' for e in profile["examples"]) or "- (없음)",
         )
-        output = self.rag.llm.complete(system, body, max_tokens=2200, max_input=12000, temperature=0.3)
+        output = self.rag.llm.complete(system, body, max_tokens=3000, max_input=60000, temperature=0.3)
         pairs = parse_qa(output, len(evidence), len(past), limit=QUESTION_COUNT + CANDIDATE_EXTRA)
         # 이번 주에 이미 한 질문을 그대로 베낀 후보는 버림 (프롬프트로 막아도 종종 복사함)
         pairs = [p for p in pairs if not is_repeat(p[0], [m["text"] for m in asked])][:QUESTION_COUNT]
         if not pairs:
             return None
         pairs = self._verify_past_links(pairs, past)
-        pairs, evidence = self._add_question_evidence(points, point_vectors, point_has_evidence, pairs, evidence)
-        # 답변 내용과 무관한 근거 번호는 지우고, 남은 근거가 없으면 '(확인 필요)' 표시 (rag와 같은 하네스)
-        checked = check_citations([(a, refs) for _, a, refs, _ in pairs],
-                                  self.rag.evidence_vectors(evidence), self.rag.clusterer.embed,
-                                  evidence_texts=self.rag.evidence_texts(evidence))
-        pairs = [(q, a2 if refs2 else mark_unsupported(a2), refs2, prefs)
-                 for (q, _, _, prefs), (a2, refs2) in zip(pairs, checked)]
-        # 근거 문서는 맞는데 그 안의 사실을 틀리게 말한 답변(예: '정산용' 구분자를 '운임 계산용'으로) — 표시만
-        answers = fact_check_answers(
-            [(a, refs) for _, a, refs, _ in pairs], self.rag.evidence_texts(evidence),
-            # 판정마다 짧은 이유를 쓰므로 답변 5개 기준으로 넉넉히
-            lambda system, body: self.rag.judge_llm.complete(system, body, max_tokens=600, max_input=12000,
-                                                       temperature=0, cache=True))
-        answers = fill_bare_answers([q for q, _, _, _ in pairs], answers, points, point_vectors,
-                                    self.rag.clusterer.embed)
-        pairs = [(q, a2, refs if not is_bare_answer(a) else [], prefs)
-                 for (q, a, refs, prefs), a2 in zip(pairs, answers)]
+        pairs, evidence = self._finalize_answers(points, point_vectors, point_has_evidence, pairs, evidence)
 
         # 인용된 근거만 1부터 다시 번호 매김 (같은 출처는 한 번호로) — rag와 같은 방식
         cited = sorted({n for _, _, refs, _ in pairs for n in refs})

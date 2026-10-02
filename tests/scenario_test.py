@@ -435,6 +435,57 @@ def t_vector_store():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_project_docs():
+    """프로젝트 문서·지난 보고 수집: 첫 실행은 기준만, 이후 변경분 요약 / 끝난 주 보고서만 다음 주 월요일 2차 근거,
+    이번 주·복사본 제외 / 근거 제외 키워드(weekly_report)에 안 걸리고 STEP 1에는 안 나옴"""
+    import json as _json, shutil, tempfile
+    from datetime import date, datetime
+    from weekly_report.collectors.project_docs import ProjectDocsCollector
+    from weekly_report.ai.rag import TopicQueryRAG, evidence_label, is_evidence_noise
+    from weekly_report.report.sections import classify_program
+    tmp = tempfile.mkdtemp(prefix="wr_projdocs_")
+    try:
+        base = os.path.join(tmp, "weekly_report_automation")
+        reports = os.path.join(base, "reports")
+        os.makedirs(reports)
+        doc = os.path.join(base, "progress.md")
+        open(doc, "w", encoding="utf-8").write("# 진행\n- 항목 26 속도 개선\n")
+        col = ProjectDocsCollector(base_dir=base, reports_dir=reports, snapshot_path=os.path.join(tmp, "snap.json"),
+                                   summarize=lambda name, changes: f"{name}: " + ", ".join(changes), today=date(2026, 10, 7))
+        if col.collect_docs():
+            return fail("첫 실행에 문서 전체를 변경으로 넣음")
+        open(doc, "w", encoding="utf-8").write("# 진행\n- 항목 26 속도 개선\n- 항목 27 저장소 보관 정책\n")
+        os.utime(doc, (1790000000, 1790000000))
+        docs = col.collect_docs()
+        if len(docs) != 1 or "[+] - 항목 27 저장소 보관 정책" not in _json.loads(docs[0]["details"])["summary"]:
+            return fail(f"변경분 수집 오류: {docs}")
+        body = "# 보고\n### 이번 주 핵심 요약\n- 10월1차 배포 완료\n- 안면결제 개발 완료\n### 주제별 작업\n- x\n"
+        for name in ("weekly_report_2026-09-28_2026-10-04.md", "weekly_report_2026-10-05_2026-10-11.md",
+                     "weekly_report_2026-09-28_2026-10-04 - 복사본.md"):
+            open(os.path.join(reports, name), "w", encoding="utf-8").write(body)
+        past = col.collect_past_reports()
+        if len(past) != 1 or past[0]["timestamp"] != "2026-10-05T09:00:00":
+            return fail(f"지난 보고 선택 오류: {[(x['file_path'], x['timestamp']) for x in past]}")
+        details = _json.loads(past[0]["details"])
+        if details["summary"] != "- 10월1차 배포 완료\n- 안면결제 개발 완료":
+            return fail(f"핵심 요약 추출 오류: {details['summary']}")
+        kw = ["주간보고 자동작성", "weekly_report", "WeeklyPulse"]
+        if any(is_evidence_noise(a, kw) for a in docs + past) or any(classify_program(a) for a in docs + past):
+            return fail("근거 제외 키워드에 걸리거나 STEP 1에 나옴")
+        label = evidence_label(past[0], datetime(2026, 10, 5, 9))
+        if not label.startswith("10/05 (지난 보고) · 09/28~10/04 주간보고"):
+            return fail(f"지난 보고 표시 오류: {label}")
+        rag = TopicQueryRAG.__new__(TopicQueryRAG)
+        rag.me_name, rag.teams_scope, rag.noise_keywords = "", "mine", kw
+        rag.excluded_ids, rag.excluded_titles = set(), set()
+        if not all(rag.eligible(a) for a in docs + past):
+            return fail("근거 후보에서 빠짐")
+        return ok("문서 첫 실행 기준만·변경분 요약, 끝난 주 보고서만 다음 주 월요일 2차 근거(이번 주·복사본 제외), "
+                  "제외 키워드 면제·STEP 1 미표시·'(지난 보고)' 표시")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def t_storage_retention():
     """저장소 보관 정책: 보관 기간이 지난 주는 요약 벡터 저장 후 활동 벡터 삭제, 요약 실패 주는 보류,
     최근 주는 유지, 레거시 임베딩 테이블 삭제, 장기 질의(요약 → 원본 활동) (임시 폴더·DB, 4차원)"""
@@ -1069,6 +1120,7 @@ TESTS = [
     ("COL-11", "수집", "OneNote 수집(라이브)", t_onenote),
     ("COL-12", "수집", "SharePoint/OneDrive 수집(라이브)", t_sharepoint),
     ("COL-13", "수집", "Office COM 읽기 + 버전 diff", t_office_com_diff),
+    ("COL-14", "수집", "프로젝트 문서·지난 보고 (근거 전용)", t_project_docs),
 
     ("PROC-01", "데이터 가공", "회의 중복 제거(teams 우선)", t_meeting_dedupe),
     ("PROC-02", "데이터 가공", "일시 파일(created+deleted) 제거", t_transient_files),

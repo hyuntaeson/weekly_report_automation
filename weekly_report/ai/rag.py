@@ -36,6 +36,9 @@ DEFAULT_SETTINGS = {
 # 근거에서 통째로 빼는 프로그램 — IDE 기록은 거의 이 프로그램 개발 요청이라 업무 근거가 아님
 # (STEP 1 프로그램별 기록에는 그대로 남는다)
 EVIDENCE_EXCLUDED_PROGRAMS = {"Claude Code (IDE)", "Devin (IDE)"}
+# 근거 전용 소스 (STEP 1 기록에는 없음) — 표시 이름, 근거 제외 키워드 검사 면제
+# project_docs: 이 프로그램의 progress.md 등 원본 문서 / past_report: 끝난 주 보고서 요약 = 2차 근거
+EVIDENCE_SOURCE_LABELS = {"project_docs": "프로젝트 문서", "past_report": "(지난 보고)"}
 # 이 중 하나라도 있어야 근거 후보 (메시지·요약·메일 제목·채팅방·페이지 제목·메모 추가 내용)
 EVIDENCE_CONTENT_KEYS = ("text", "summary", "subject", "chat", "title", "content_added")
 # 코사인 유사도 기준 — 이 임베딩 모델에서 관련 기록은 보통 0.45~0.55, 무관한 기록은 0.2~0.3
@@ -46,6 +49,9 @@ SUPPORT_MIN_SCORE = 0.42
 # 0.30~0.42는 임베딩만으론 구분이 안 되는 구간(맞는 인용 0.406 사례) → 핵심어가 근거 원문에 있는지로 판정
 GRAY_MIN_SCORE = 0.30
 KEYWORD_MIN_OVERLAP = 0.5
+# LLM에 주는 근거 원문 길이 — 예전엔 앞 300자만 줘서 표·수치가 뒤쪽에 있으면 "자료에 없다"고 답했음
+# (정답셋 평가: 권역 구분표·생산성 수치·DB 구분값을 '확인 필요'로 처리). 비정상적으로 긴 원문만 막는 안전 상한
+EVIDENCE_TEXT_MAX = 2000
 WEEK_TOP_K = 10
 PAST_TOP_K = 3
 
@@ -55,6 +61,7 @@ RAG_PROMPT = (
     "각 불릿은 '- '로 시작하고 무엇을·왜·결과를 알 수 있게 구체적으로 쓰며, "
     "끝에 핵심 근거 번호 1~3개를 [1][3]처럼 반드시 단다. "
     "인사·감사·인증번호 공유 같은 사소한 메시지는 근거로 쓰지 마. "
+    "'(지난 보고)' 기록은 AI가 만든 지난주 보고서 요약(2차 자료)이므로, 같은 내용의 원본 기록이 있으면 원본 번호를 단다. "
     "'(지난)' 표시가 붙은 기록은 지난주 이전 기록이므로, 이번 주 내용과 이어지는 경우에만 "
     "마지막 불릿 하나를 '- (지난 기록) …'으로 시작해 연결해 — 지난번에 무슨 일이 있었고 "
     "이번 주와 어떻게 이어지는지 의미가 충분히 전달되게 1~2문장으로 써도 된다. "
@@ -173,6 +180,11 @@ def check_citations(items, evidence_vectors, embed, min_score=SUPPORT_MIN_SCORE,
     return checked
 
 
+def evidence_full_text(activity):
+    """LLM에 근거로 줄 원문 — 경로 + 메시지·요약·제목·메모 추가 내용 (안전 상한까지, 문장 경계에서 끊음)"""
+    return clean_text(TopicQueryRAG.evidence_texts([{"activity": activity}])[1], EVIDENCE_TEXT_MAX)
+
+
 def evidence_label(activity, when):
     """보고서 근거 표시: '09/25 Teams · 운영&서버 방 — "거래저장 실패 원인 확인 중입니다."'
     출처 이름은 자르지 않고, 무엇을 말한 기록인지 요지(첫 문장)를 붙인다."""
@@ -183,7 +195,8 @@ def evidence_label(activity, when):
         except (TypeError, ValueError):
             details = {}
     details = details if isinstance(details, dict) else {}
-    program = classify_program(activity) or activity.get("source") or ""
+    program = (classify_program(activity) or EVIDENCE_SOURCE_LABELS.get(activity.get("source"))
+               or activity.get("source") or "")
     where = details.get("chat") or details.get("name") or details.get("subject") \
         or details.get("title") or os.path.basename(str(activity.get("file_path") or "")) or ""
     where = clean_text(where, 200)  # 상한은 비정상적으로 긴 URL 대비용
@@ -243,7 +256,10 @@ def is_trivial_reply(text):
 
 
 def is_evidence_noise(activity, keywords):
-    """RAG·STEP 3 근거로 쓰면 안 되는 활동: IDE 기록, 또는 경로·제목·내용에 제외 키워드 포함"""
+    """RAG·STEP 3 근거로 쓰면 안 되는 활동: IDE 기록, 또는 경로·제목·내용에 제외 키워드 포함.
+    프로젝트 문서·지난 보고는 수집 단계에서 이미 범위를 정했으므로(산출물 중 끝난 주 보고서만) 키워드 검사를 하지 않는다."""
+    if activity.get("source") in EVIDENCE_SOURCE_LABELS:
+        return False
     if classify_program(activity) in EVIDENCE_EXCLUDED_PROGRAMS:
         return True
     keywords = [k.lower() for k in keywords if k and k.strip()]
@@ -421,7 +437,7 @@ class TopicQueryRAG:
             for _, activity in items:
                 when = to_local_datetime(activity.get("timestamp"), activity.get("source"))
                 if when:
-                    text = self.clusterer._activity_text(activity)
+                    text = evidence_full_text(activity)
                     if classify_program(activity) == "Chrome":
                         text = f"{evidence_label(activity, when)} {text}"  # 방문 URL만으론 뜻을 몰라 페이지 제목을 붙임
                     evidence.append({"label": evidence_label(activity, when), "past": past, "text": text,
@@ -429,11 +445,11 @@ class TopicQueryRAG:
         if not evidence:
             return None
         body = "<evidence>\n" + "\n".join(
-            f"[{i}] {'(지난) ' if e['past'] else ''}{e['label']} | {clean_text(e['text'], 300)}"
+            f"[{i}] {'(지난) ' if e['past'] else ''}{e['label']} | {e['text']}"
             for i, e in enumerate(evidence, start=1)
         ) + "\n</evidence>"
         output = self.llm.complete(RAG_PROMPT.format(topic=topic), body,
-                                   max_tokens=800, max_input=8000, temperature=0, cache=True)
+                                   max_tokens=800, max_input=40000, temperature=0, cache=True)
         bullets = parse_cited_bullets(output, len(evidence))
         if output and output.strip().upper().startswith("NONE"):
             return None  # 검색은 걸렸지만 LLM이 주제와 무관하다고 판단
