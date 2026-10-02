@@ -45,6 +45,8 @@
 - [x] 요약 글자 수 제한 정리 — 요약은 자르지 않고 의미 전달 우선, 긴 Teams 메시지·지난 대화는 LLM 요약
 - [x] LLM 출력 하네스 — 요약 거절·되묻기 재요청, 근거 번호-문장 관련성 검증, STEP 3 답변 사실 대조('근거와 다름' 표시)
 - [x] STEP 3 2단계 근거 검색(질문별 근거 보강·재답변) + 판정 전용 모델(`litellm_config.json`의 `judge_model`, 예: Opus 5.5)
+- [x] 프로젝트 문서(progress.md 등) 근거 수집 + 지난 보고서 2차 근거
+- [x] STEP 3 회귀 평가 — 사용자 확정 정답셋(`data/eval/gold.json`) + `tests/eval_step3.py`
 - [x] 보고서 생성 속도 개선(분석 병렬화·LLM 캐시·10분 내 재수집 생략) + 메인 화면 생성 상태 표시(요청 시각·진행 단계·폴더 바로가기)
 - [x] 저장소 보관 정책 — Settings에서 활동 벡터 보관 기간(8~104주) 선택, 지난 주는 주간 요약 벡터로 영구 보관, 현재 사용량·예상 속도 표시
 - [x] macOS 이식 준비 — win32 가드, Outlook은 Graph 폴백으로 플랫폼 무관 수집
@@ -113,6 +115,7 @@ weekly_report_automation/
 │   │   ├── sharepoint.py         # SharePoint/OneDrive 수정 파일 + 버전 비교 (Graph)
 │   │   ├── confluence.py         # Confluence 페이지 (AI 요약)
 │   │   ├── slack.py              # Slack (토큰 승인 대기)
+│   │   ├── project_docs.py       # 이 프로젝트 문서 변경분·지난 보고서 → 근거 전용
 │   │   └── integrated.py         # 통합 수집기 (상시 감시 + 보고서 직전 1회 수집)
 │   ├── storage/
 │   │   ├── database.py           # SQLite 활동 DB (upsert, 요약 캐시)
@@ -140,7 +143,8 @@ weekly_report_automation/
 │       ├── actions.py            # 추적·수집·보고서 생성 동작
 │       └── widgets.py            # 공용 컨트롤
 ├── tests/
-│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (51건 → test_reports/*.xlsx)
+│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (52건 → test_reports/*.xlsx)
+│   ├── eval_step3.py             # STEP 3 정답셋 회귀 평가 (→ test_reports/eval_step3_*.md)
 │   └── legacy/                   # 구버전 테스트 (test_all_completed 등)
 ├── scripts/
 │   ├── cleanup_data.py           # data/ 테스트 산출물 정리
