@@ -896,7 +896,7 @@ def t_llm_output_check():
                ("일정 확정 [3]", [3]), ("확인 필요", [])]
     texts = {1: "CJ대한통운 정산 시 동일권/타권 구분 필요", 2: "KICC 개발기 운영기 동일 TID", 3: "산출물 목록"}
     seen = []
-    judged = fact_check_answers(answers, texts, lambda s, b: seen.append(b) or "1: DIFF\n2: OK\n3: NONE")
+    judged = fact_check_answers(answers, texts, lambda s, b: seen.append(b) or "답변1: DIFF - 정산용인데 운임 계산용\n답변2: OK - 일치\n답변3: NONE - 없음")
     if judged != [f"구분자는 운임 계산용입니다. [1] {DIFF_MARK}", "TID 개발/운영 동일 [2]",
                   "일정 확정 [3] (확인 필요)", "확인 필요"] or "CJ대한통운 정산" not in seen[0]:
         return fail(f"사실 대조 표시 오류: {judged}")
@@ -912,13 +912,19 @@ def t_llm_output_check():
     if filled != ["보고 기준: 안면결제 개발 완료, 장비 9월 초 제공 예정 — 질문하신 부분은 확인 필요합니다. (보고 내용)",
                   "10월 배포 완료 [1]"]:
         return fail(f"빈 답변 폴백 오류: {filled}")
+    # 2단계 검색 재답변: 그 질문에 준 근거 번호만 남기고, 없으면 '(확인 필요)'
+    from weekly_report.ai.questions import parse_reanswers
+    redone = parse_reanswers("A1: 권역은 우편번호 앞 2자리로 구분합니다. [7][2]\nA3: 설정 완료 [9]\nA4: 무시",
+                             {1: {2, 7}, 3: {5}})
+    if redone != {1: ("권역은 우편번호 앞 2자리로 구분합니다. [2][7]", [2, 7]), 3: ("설정 완료 (확인 필요)", [])}:
+        return fail(f"재답변 파싱 오류: {redone}")
     qa = parse_qa("Q: 배포 일정은?\nA: 10월 7일 배포 예정입니다. (보고 내용)\nQ: 원인은?\nA: 원인 분석 중입니다.\n"
                   "Q: 언제부터야?\nA: 확인 필요 (보고 내용)", 3)
     if (qa[0][1] != "10월 7일 배포 예정입니다. (보고 내용)" or not qa[1][1].endswith("(확인 필요)")
             or qa[2][1] != "확인 필요"):
         return fail(f"STEP 3 근거 표시 오류: {qa}")
     return ok("요약 거절·되묻기 재요청→실패 시 None·캐시 안 함, 서두 제거, 업무 문장 오탐 없음, "
-              "무관한 근거 번호 제거(애매하면 핵심어 확인), 답변-근거 사실 대조 표시, '(보고 내용)'·'(확인 필요)' 표시")
+              "무관한 근거 번호 제거(애매하면 핵심어 확인), 답변-근거 사실 대조 표시, 질문별 근거 재답변, '(보고 내용)'·'(확인 필요)' 표시")
 
 
 def t_rag_sections():

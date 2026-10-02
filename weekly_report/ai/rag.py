@@ -271,6 +271,7 @@ class TopicQueryRAG:
         self.gen = generator
         self.clusterer = ActivityClusterer(config_path)
         self.llm = LLMSummarizer(config_path)
+        self.judge_llm = LLMSummarizer(config_path, judge=True)  # 판정 전용 (사실 대조·과거 발언 연결)
         self.store = ActivityVectorStore()
         teams_settings, self.me_name = generator._teams_context()
         self.teams_scope = teams_settings.get("report_scope", "mine")
@@ -311,12 +312,14 @@ class TopicQueryRAG:
             return bool(details.get("from_me") or (self.me_name and details.get("sender") == self.me_name))
         return True
 
-    def retrieve(self, vectors, date_from, date_to, pool, limit, sender_contains=None):
+    def retrieve(self, vectors, date_from, date_to, pool, limit, sender_contains=None, min_score=MIN_SCORE):
         """질의 벡터마다 기간 내 의미가 가까운 활동 → pool(허용된 활동 key→activity)에 있는 것만.
         반환: 벡터별 [(score, activity)]"""
         requests = [
-            {"vector": v, "limit": limit * 3, "date_from": date_from, "date_to": date_to,
-             "sender_contains": sender_contains, "min_score": MIN_SCORE}
+            # 넉넉히 가져온 뒤 근거 자격(pool)으로 거른다 — 9개만 가져오면 IDE·이름뿐인 기록 등이 걸러져
+            # 근거가 limit보다 적게 남는 경우가 많았음 (실측: 보고 항목별 9개 중 0~7개 통과)
+            {"vector": v, "limit": max(limit * 10, 30), "date_from": date_from, "date_to": date_to,
+             "sender_contains": sender_contains, "min_score": min_score}
             for v in vectors
         ]
         results = []

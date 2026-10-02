@@ -106,8 +106,12 @@ PROMPT_TEMPLATES = {
 class LLMSummarizer:
     """LiteLLM 프록시(OpenAI 호환)를 LCEL 체인으로 감싼 텍스트 요약기"""
 
-    def __init__(self, config_path=paths.LITELLM_CONFIG):
+    def __init__(self, config_path=paths.LITELLM_CONFIG, judge=False):
+        """judge=True면 config의 judge_model(없으면 model)을 쓴다 — 사실 대조 같은 판정(LLM-as-judge)은
+        틀린 곳을 찾아야 해서 요약용 경량 모델로는 부족했음 (실측: Haiku 6/15, Opus 5.5 15/15)."""
         self.config = self._load_config(config_path)
+        if judge and self.config.get("judge_model"):
+            self.config = {**self.config, "model": self.config["judge_model"]}
         self.enabled = bool(self.config.get("enabled")) and bool(
             self.config.get("api_key")
         )
