@@ -613,7 +613,7 @@ class TeamsCollector:
                     "chat": chat_title,
                     "chat_id": chat_id,
                     "sender": sender,
-                    "text": text[:300],
+                    "text": text[:4000],  # 근거·요약 재료 — 짧게 자르면 의미가 끊김
                     "message_type": msg.get("messageType"),
                     # 주간보고서에서 '내가 보낸 메시지'만 골라 요약할 때 사용
                     "from_me": bool(me_name and sender == me_name),

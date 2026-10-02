@@ -21,7 +21,7 @@ from difflib import SequenceMatcher
 from weekly_report import paths
 from weekly_report.ai.rag import TopicQueryRAG, evidence_label
 from weekly_report.common.timeutil import to_local_datetime
-from weekly_report.report.sections import clean_text
+from weekly_report.report.sections import clean_text, condense
 from weekly_report.storage.database import ActivityDatabase
 
 QUESTION_COUNT = 5
@@ -174,7 +174,7 @@ class ExpectedQuestions:
                 context = [f"{short_name(pd.get('sender'))}: {clean_text(pd.get('text'), 120)}"
                            for pw, pd, _ in msgs[max(0, i - CONTEXT_BEFORE):i]
                            if when - pw <= CONTEXT_WINDOW and pd.get("text")]
-                found.append({"activity": a, "text": clean_text(d["text"], 200), "when": when, "context": context})
+                found.append({"activity": a, "text": condense(d["text"]), "when": when, "context": context})
         found.sort(key=lambda m: m["when"])
         return found
 
@@ -214,7 +214,7 @@ class ExpectedQuestions:
     def build_sections(self, week_activities, week_start, week_end, report_points):
         """예상질문자별 [{"name", "style", "examples", "qa": [{"q", "a", "past"}],
         "past": [{"n", "when", "chat", "text"}], "evidence": [{"n", "label"}]}]"""
-        points = [clean_text(p, 200) for p in report_points if p and p.strip()][:MAX_POINTS]
+        points = [clean_text(p, None) for p in report_points if p and p.strip()][:MAX_POINTS]
         if not self.enabled or not points:
             return []
         end = datetime.strptime(week_end, "%Y-%m-%d")
@@ -343,7 +343,7 @@ class ExpectedQuestions:
                    for q, a, _, refs in pairs],
             # 질문의 바탕이 된 상사의 실제 과거 발언 (사실 근거가 아니라 질문 맥락)
             "past": [{"n": f"P{past_renum[n]}", "when": f"{past[n - 1]['when']:%m/%d}",
-                      "chat": clean_text(_details(past[n - 1]["activity"]).get("chat"), 30),
+                      "chat": clean_text(_details(past[n - 1]["activity"]).get("chat"), 200),
                       "text": past[n - 1]["text"]} for n in past_cited],
             "evidence": [{"n": i, "label": label} for i, label in enumerate(sources, start=1)],
         }

@@ -65,7 +65,7 @@
 - {{ b }}
 {% endfor %}
 
-<sub>근거: {% for e in r.evidence %}[{{ e.n }}]{% if e.past %}(지난){% endif %} {{ e.label }}{% if not loop.last %} · {% endif %}{% endfor %}</sub>
+<sub>근거{% for e in r.evidence %}<br>[{{ e.n }}]{% if e.past %}(지난){% endif %} {{ e.label }}{% endfor %}</sub>
 {% endfor %}
 {% endif %}
 {% if teams_my_summary %}
@@ -112,7 +112,7 @@
 {% endif %}
 {% if sec.evidence %}
 
-<sub>근거: {% for e in sec.evidence %}[{{ e.n }}] {{ e.label }}{% if not loop.last %} · {% endif %}{% endfor %}</sub>
+<sub>근거{% for e in sec.evidence %}<br>[{{ e.n }}] {{ e.label }}{% endfor %}</sub>
 {% endif %}
 {% endfor %}
 

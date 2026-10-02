@@ -175,7 +175,7 @@ class AIToolCollector:
                                 "source": "claude_code",
                                 "details": {
                                     "sessionId": entry.get("sessionId"),
-                                    "display": entry.get("display", "")[:200],
+                                    "display": entry.get("display", "")[:2000],
                                     "project": entry.get("project", "unknown"),
                                 },
                             }

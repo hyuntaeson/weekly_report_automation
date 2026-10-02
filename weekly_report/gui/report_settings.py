@@ -1,4 +1,4 @@
-"""Settings > 보고서 설정 — RAG 주제 질의 (config/report_settings.json)."""
+"""Settings > 보고서 설정 — RAG 주제 질의 · 근거 제외 키워드 (config/report_settings.json)."""
 
 import flet as ft
 
@@ -27,6 +27,14 @@ class ReportSettingsMixin:
             width=200,
             on_change=lambda e: self._rag_past_weeks_changed(e.control.value),
         )
+        self.noise_keyword_input = ft.TextField(
+            label="근거 제외 키워드 추가",
+            hint_text="예: 주간보고 자동작성, 개인 메모",
+            width=row_width - 110,
+            on_submit=self._add_noise_keyword,
+        )
+        self.noise_keyword_chips = ft.Row(spacing=8, run_spacing=8, wrap=True)
+        self._render_noise_keywords()
         return ft.Column(
             [
                 ft.Text("보고서 설정 — 주제 질의", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
@@ -54,6 +62,32 @@ class ReportSettingsMixin:
                 ),
                 self.rag_topic_chips,
                 past_weeks,
+                ft.Container(height=8),
+                ft.Text("근거 제외", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
+                ft.Text(
+                    "주제 질의 요약과 STEP 3 예상 질문 답변의 근거에서 뺄 기록입니다. "
+                    "Claude Code 등 IDE 기록은 항상 제외되고, 아래 키워드가 파일 경로·제목·내용에 들어 있는 기록도 제외됩니다. "
+                    "STEP 1 프로그램별 기록에는 그대로 남습니다.",
+                    size=12, color=ft.Colors.GREY_600,
+                ),
+                ft.Row(
+                    [
+                        self.noise_keyword_input,
+                        ft.Button(
+                            "추가",
+                            icon=ft.Icons.ADD,
+                            style=ft.ButtonStyle(
+                                bgcolor=ft.Colors.BLUE,
+                                color=ft.Colors.WHITE,
+                                padding=14,
+                                shape=ft.RoundedRectangleBorder(radius=8),
+                            ),
+                            on_click=self._add_noise_keyword,
+                        ),
+                    ],
+                    spacing=8,
+                ),
+                self.noise_keyword_chips,
             ],
             spacing=10,
             width=row_width,
@@ -110,3 +144,40 @@ class ReportSettingsMixin:
         except (TypeError, ValueError):
             return
         self._save_report_settings()
+
+    def _render_noise_keywords(self):
+        keywords = self.report_settings.get("evidence_exclude_keywords", [])
+        if not keywords:
+            self.noise_keyword_chips.controls = [
+                ft.Text("등록된 키워드가 없습니다 — IDE 기록만 제외됩니다.", size=12, color=ft.Colors.GREY_500)
+            ]
+            return
+        self.noise_keyword_chips.controls = [
+            removable_chip(k, lambda e, k=k: self._remove_noise_keyword(k)) for k in keywords
+        ]
+
+    def _add_noise_keyword(self, e):
+        keyword = " ".join((self.noise_keyword_input.value or "").split())
+        if not keyword:
+            self.show_snack("키워드를 입력해주세요")
+            return
+        keywords = list(self.report_settings.get("evidence_exclude_keywords", []))
+        if keyword.lower() in (k.lower() for k in keywords):
+            self.show_snack("이미 등록된 키워드입니다")
+            return
+        keywords.append(keyword)
+        self.report_settings["evidence_exclude_keywords"] = keywords
+        self._save_report_settings()
+        self._render_noise_keywords()
+        self.noise_keyword_input.value = ""
+        self.page.update()
+        self.show_snack(f"근거 제외 키워드 추가됨: {keyword}")
+
+    def _remove_noise_keyword(self, keyword):
+        self.report_settings["evidence_exclude_keywords"] = [
+            k for k in self.report_settings.get("evidence_exclude_keywords", []) if k != keyword
+        ]
+        self._save_report_settings()
+        self._render_noise_keywords()
+        self.page.update()
+        self.show_snack(f"근거 제외 키워드 삭제됨: {keyword}")

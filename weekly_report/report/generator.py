@@ -222,9 +222,10 @@ class ReportGenerator:
                 para(document, rag["topic"], bold=True, indent=0.4, space_before=4)
                 for bullet in rag["bullets"]:
                     para(document, f"• {bullet}", indent=0.8)
-                para(document, "근거: " + " · ".join(
-                    f"[{e['n']}]{'(지난)' if e['past'] else ''} {e['label']}" for e in rag["evidence"]
-                ), size=9, italic=True, indent=0.8)
+                para(document, "근거", size=9, italic=True, indent=0.8)
+                for e in rag["evidence"]:
+                    para(document, f"[{e['n']}]{'(지난)' if e['past'] else ''} {e['label']}",
+                         size=9, italic=True, indent=0.8)
 
             if weekly_data.get("teams_my_summary"):
                 para(document, "Teams 메시지 요약", size=12, bold=True, space_before=6)
@@ -259,9 +260,9 @@ class ReportGenerator:
                         f"{p['n']} {p['when']} {p['chat']} — \"{p['text']}\"" for p in section["past"]
                     ), size=9, italic=True, indent=0.4)
                 if section.get("evidence"):
-                    para(document, "근거: " + " · ".join(
-                        f"[{e['n']}] {e['label']}" for e in section["evidence"]
-                    ), size=9, italic=True, indent=0.4)
+                    para(document, "근거", size=9, italic=True, indent=0.4)
+                    for e in section["evidence"]:
+                        para(document, f"[{e['n']}] {e['label']}", size=9, italic=True, indent=0.4)
             if expected_qa:
                 para(document, "※ 내가 참여한 Teams 대화만 사용 · 근거로 확인되지 않는 내용은 '확인 필요'로 표시",
                      size=9, italic=True, space_before=6)

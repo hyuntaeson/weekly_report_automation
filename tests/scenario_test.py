@@ -513,6 +513,25 @@ def t_storage_settings():
     return ok("보관 기간 선택·사용량(벡터 수·여는 시간)·기간별 예상 속도 안내 정상")
 
 
+def t_condense():
+    """긴 원문 한 줄(Teams 메시지·지난 대화·Claude Code 요청): 짧으면 원문, 길면 잘라 싣지 않고 요약, 요약 실패 시 문장 경계"""
+    from weekly_report.report import sections
+    short = "직영 20개점 점검 완료했습니다."
+    if sections.condense(short, summarize=lambda t: "X") != short:
+        return fail("짧은 원문이 바뀜")
+    long = "10월2차 정기배포 대상은 직영 20개점입니다. " + "배포 전 점검 항목을 담당자별로 확인해 주세요. " * 12
+    calls = []
+    got = sections.condense(long, summarize=lambda t: calls.append(t) or "10월2차 배포 대상 직영 20개점, 담당자별 점검 요청")
+    again = sections.condense(long, summarize=lambda t: calls.append(t) or "다른 요약")
+    if got != "(요약) 10월2차 배포 대상 직영 20개점, 담당자별 점검 요청" or again != got or len(calls) != 1:
+        return fail(f"긴 원문 요약/재사용 실패: {got} / 호출 {len(calls)}회")
+    other = long.replace("20개점", "30개점")
+    fallback = sections.condense(other, summarize=lambda t: None)
+    if len(fallback) > sections.RAW_LINE_LEN or not fallback.endswith("."):
+        return fail(f"요약 실패 시 문장 경계 폴백 실패: {fallback[-20:]}")
+    return ok("짧은 원문 유지, 긴 원문 요약(프로세스 내 재사용), 요약 실패 시 문장 경계 폴백")
+
+
 def t_split_sequence():
     """요약 줄 안의 번호 목록 분리 — IP·버전·날짜는 번호로 오인하지 않는지"""
     from weekly_report.report.sections import split_sequence
@@ -696,7 +715,14 @@ def t_rag_topic_settings():
         return fail(f"결과 불일치: {topics}")
     if app.report_settings["rag_past_weeks"] != 6:
         return fail(f"검색 범위 불일치: {app.report_settings['rag_past_weeks']}")
-    return ok("주제 추가·중복/빈값 거부·삭제, 검색 범위 숫자 검증 정상")
+    app.report_settings["evidence_exclude_keywords"] = ["weekly_report"]
+    for text in (" 개인 메모 ", "WEEKLY_REPORT", ""):
+        app.noise_keyword_input.value = text
+        app._add_noise_keyword(None)
+    app._remove_noise_keyword("weekly_report")
+    if app.report_settings["evidence_exclude_keywords"] != ["개인 메모"] or len(app.noise_keyword_chips.controls) != 1:
+        return fail(f"근거 제외 키워드 불일치: {app.report_settings['evidence_exclude_keywords']}")
+    return ok("주제·근거 제외 키워드 추가·중복(대소문자 무시)/빈값 거부·삭제, 검색 범위 숫자 검증 정상")
 
 
 def t_rag_citation_check():
@@ -717,6 +743,94 @@ def t_rag_citation_check():
     if parse_cited_bullets("NONE", 3) != [] or parse_cited_bullets("", 3) != []:
         return fail("NONE/빈 출력 처리 실패")
     return ok("근거 없는 문장 2건 제거, 인용 4개→3개 축약, NONE 처리 정상")
+
+
+def t_evidence_noise_filter():
+    """근거 노이즈 필터: IDE 기록 전체 제외, 키워드(경로·제목·이스케이프된 내용) 제외, 일반 업무 기록은 유지"""
+    import json as _json
+    from weekly_report.ai.rag import is_evidence_noise
+    kw = ["주간보고 자동작성", "weekly_report", "WeeklyPulse"]
+    noise = [
+        {"source": "claude_code", "action": "claude_interaction", "file_path": "C:/orca/first", "details": "{}"},
+        {"source": "orca", "action": "modified", "file_path": "C:/orca/first", "details": "{}"},
+        {"source": "filesystem", "file_type": "txt", "action": "modified",
+         "file_path": "C:/Downloads/주간보고 자동작성 프로그램 확인.txt", "details": "{}"},
+        {"source": "browser", "action": "visit", "file_path": "https://github.com/x/weekly_report_automation",
+         "details": _json.dumps({"title": "repo"})},
+        {"source": "outlook", "action": "sent", "file_path": "메일",  # ensure_ascii로 저장된 내용
+         "details": _json.dumps({"summary": "WeeklyPulse 시연 자료 공유"})},
+    ]
+    keep = [
+        {"source": "teams", "action": "message", "file_path": "운영방",
+         "details": _json.dumps({"text": "10월2차 정기배포 모니터링 완료"}, ensure_ascii=False)},
+        {"source": "confluence", "action": "edited", "file_path": "POS 결제수단 현황",
+         "details": _json.dumps({"summary": "결제수단별 현황 표 갱신"})},
+    ]
+    wrong = [a["file_path"] for a in noise if not is_evidence_noise(a, kw)]
+    wrong += [a["file_path"] for a in keep if is_evidence_noise(a, kw)]
+    if wrong:
+        return fail(f"판정 오류: {wrong}")
+    if is_evidence_noise(noise[2], []) or not is_evidence_noise(noise[0], []):
+        return fail("키워드 없을 때 IDE만 제외돼야 함")
+    # 이름뿐인 기록(첨부파일·스크린샷·제목 없는 방문)은 근거 후보에서 제외, 내용 있는 메모는 유지
+    from weekly_report.ai.rag import TopicQueryRAG
+    rag = TopicQueryRAG.__new__(TopicQueryRAG)
+    rag.me_name, rag.teams_scope, rag.noise_keywords = "", "all", kw
+    rag.excluded_ids, rag.excluded_titles = set(), set()
+    name_only = [
+        {"source": "confluence", "action": "confluence_created", "file_path": "팀/AI_CONTEXT.md",
+         "details": _json.dumps({"page_id": "1", "summary": ""})},
+        {"source": "sharepoint", "action": "modified", "file_path": "SharePoint 파일: 스크린샷.png",
+         "details": _json.dumps({"name": "스크린샷.png"})},
+        {"source": "browser", "action": "visit", "file_path": "https://gw.example.com/login", "details": "{}"},
+    ]
+    name_only.append({"source": "teams", "action": "message", "file_path": "Teams 채팅: 파트리더",
+                      "details": _json.dumps({"chat": "[POS2팀] 파트리더", "text": "네 팀장님.", "from_me": True})})
+    memo = {"source": "filesystem", "file_type": "txt", "action": "modified", "file_path": "C:/memo/오늘 할 일.txt",
+            "details": _json.dumps({"content_added": "국민QR 환불 개선 배포 확인", "summary": "배포 확인 메모"})}
+    wrong = [a["file_path"] for a in name_only if rag.eligible(a)]
+    wrong += [a["file_path"] for a in keep + [memo] if not rag.eligible(a)]
+    if wrong:
+        return fail(f"근거 후보 판정 오류: {wrong}")
+    return ok("IDE 기록·키워드(경로/제목/이스케이프 내용)·이름뿐인 기록·단순 대답 제외, 업무 기록·메모 유지")
+
+
+def t_evidence_label():
+    """근거 표기: 출처 이름을 자르지 않음, 요지는 첫 문장(요약 제목줄 제거), 긴 글은 단어 경계, 인증번호 메시지는 요지 생략"""
+    import json as _json
+    from datetime import datetime as _dt
+    from weekly_report.ai.rag import EVIDENCE_GIST_MAX, evidence_label
+    when = _dt(2026, 9, 29, 10, 0)
+    chat = "[이마트24POS팀] 10월2차 정기배포 & 모니터링 공유방"
+    def label(details, source="teams"):
+        return evidence_label({"source": source, "action": "message", "file_path": "x",
+                               "details": _json.dumps(details, ensure_ascii=False)}, when)
+    a = label({"chat": chat, "text": "직영 20개점 점검 결과 특이사항 없습니다. 내일 전체점 배포 예정입니다."})
+    if chat not in a or not a.endswith('"직영 20개점 점검 결과 특이사항 없습니다."'):
+        return fail(f"출처/첫 문장 오류: {a}")
+    b = label({"chat": chat, "text": "인증번호 482913 입니다"})
+    if '"' in b:
+        return fail(f"민감 내용 노출: {b}")
+    c = label({"summary": "# 핵심 요약\n**도입 내용**: 안면결제 단말기 도입, 10월 오픈 예정\n**영향도**: 기존과 동일"},
+              source="confluence")
+    if not c.endswith('"도입 내용 : 안면결제 단말기 도입, 10월 오픈 예정"'):
+        return fail(f"여러 줄 요약의 첫 내용 줄 실패: {c}")
+    long_text = "배포 " * 200
+    d = label({"chat": chat, "text": long_text})
+    gist = d.split(' — "', 1)[1]
+    if not gist.endswith('…"') or len(gist) > EVIDENCE_GIST_MAX + 3 or "배포배" in gist:
+        return fail(f"긴 글 자르기 오류: {gist[-20:]}")
+    from weekly_report.report.sections import clean_text
+    long = "첫 문장은 배포 완료입니다. " + "두 번째 문장은 아주 길게 이어지는 설명 " * 20
+    if clean_text(long, None) != long.strip():
+        return fail("limit=None인데 잘림")
+    if clean_text(long, 30) != "첫 문장은 배포 완료입니다.":  # 상한의 절반을 넘긴 문장 끝에서 끊음
+        return fail(f"문장 경계 자르기 실패: {clean_text(long, 30)}")
+    cut = clean_text("가나다라 " * 50, 100)
+    if not cut.endswith("…") or "가나다라가" in cut or cut[-2] == " ":
+        return fail(f"단어 경계 자르기 실패: {cut[-12:]}")
+    return ok("출처 이름 전체 표시, 첫 문장 요지, 요약 제목줄 제거, 긴 글 단어 경계, 인증번호 요지 생략, "
+              "clean_text 무제한·문장/단어 경계 자르기")
 
 
 def t_rag_sections():
@@ -871,11 +985,14 @@ TESTS = [
     ("PROC-07", "데이터 가공", "요약 번호 목록 줄바꿈 분리", t_split_sequence),
     ("PROC-08", "데이터 가공", "VectorDB 저장·필터 검색 (Qdrant)", t_vector_store),
     ("PROC-09", "데이터 가공", "저장소 보관 정책 (요약 후 벡터 정리)", t_storage_retention),
+    ("PROC-10", "데이터 가공", "긴 원문 요약 (Teams 메시지·지난 대화)", t_condense),
 
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
     ("AI-03", "AI 분석", "LangChain/LangGraph 임포트", t_langchain_present),
     ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
+    ("AI-08", "AI 분석", "근거 노이즈 필터 (IDE·제외 키워드·이름뿐인 기록)", t_evidence_noise_filter),
+    ("AI-09", "AI 분석", "근거 표기 (출처 전체·내용 요지)", t_evidence_label),
     ("AI-05", "AI 분석", "RAG 주제 질의 섹션 (실데이터)", t_rag_sections),
     ("AI-06", "AI 분석", "STEP 3 예상 질문 출력 검증 (하네스)", t_expected_qa_check),
     ("AI-07", "AI 분석", "STEP 3 예상 질문 & 답변 (실데이터)", t_expected_qa),
@@ -890,7 +1007,7 @@ TESTS = [
     ("GUI-02", "GUI·실행", "프로세스 감지", t_process_detect),
     ("GUI-03", "GUI·실행", "통합 수집기 임포트", t_integrated_collector),
     ("GUI-04", "GUI·실행", "예상질문자 설정 (추가·삭제)", t_expected_questioner_settings),
-    ("GUI-05", "GUI·실행", "주제 질의 설정 (추가·삭제)", t_rag_topic_settings),
+    ("GUI-05", "GUI·실행", "주제 질의·근거 제외 설정 (추가·삭제)", t_rag_topic_settings),
     ("GUI-06", "GUI·실행", "보고서 생성 상태 표시", t_report_status_panel),
     ("GUI-07", "GUI·실행", "저장소 관리 설정 (보관 기간·사용량)", t_storage_settings),
 ]

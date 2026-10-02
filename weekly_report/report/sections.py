@@ -68,9 +68,12 @@ _SOURCE_PROGRAM = {
 _HEX_TEMP_NAME_RE = re.compile(r"^[0-9A-Fa-f]{8}(\.[A-Za-z0-9]+)?$")
 
 MAX_LINES_PER_ITEM = 5
-MAX_TEXT_LEN = 160
-# 파일 변경·문서 요약 줄 — STEP 2 재요약의 재료가 되므로 넉넉하게
-SUMMARY_LEN = 500
+MAX_TEXT_LEN = 300  # 제목·이름 등 한 줄 항목의 안전 상한 (요약 본문은 자르지 않음)
+# 파일 변경·문서 요약 줄 — 글자 수로 자르지 않고 의미가 전달되게 전부 싣는다
+# (STEP 2가 STEP 1을 재요약하므로 재료가 충분해야 함, 사용자 지정 2026-10-02)
+SUMMARY_LEN = None
+# 요약이 아닌 원문 한 줄(Teams 메시지·지난 대화·Claude Code 요청) — 이보다 길면 잘라 싣지 않고 LLM 요약 (condense)
+RAW_LINE_LEN = 300
 
 
 _OFFICE_EXT_PROGRAM = {
@@ -132,14 +135,53 @@ def _details(activity):
 
 
 def clean_text(text, limit=MAX_TEXT_LEN):
-    """HTML 엔티티·마크다운 장식·줄바꿈을 걷어내고 한 줄로 자른다."""
+    """HTML 엔티티·마크다운 장식·줄바꿈을 걷어내고 한 줄로 만든다.
+    limit=None이면 자르지 않는다. 넘칠 때도 단어 중간이 아니라 문장 끝(없으면 단어 경계)에서 끊는다."""
     text = html.unescape(str(text or "")).replace("\xa0", " ")
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"[#*`>]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > limit:
-        text = text[: limit - 1].rstrip() + "…"
-    return text
+    if limit is None or len(text) <= limit:
+        return text
+    head = text[:limit]
+    ends = [m.end() for m in re.finditer(r"[.!?。](?=\s)", head)]
+    if ends and ends[-1] >= limit // 2:
+        return head[:ends[-1]]
+    space = head.rfind(" ", 0, limit - 1)
+    return head[:space if space >= limit // 2 else limit - 1].rstrip() + "…"
+
+
+CONDENSE_PROMPT = (
+    "다음은 업무 메시지(또는 요청문) 원문이야. 누가 무엇을 알리거나 요청·결정했는지 "
+    "핵심만 간결하게 하되 의미가 끊기지 않게 한국어로 요약해줘. "
+    "날짜·수치·대상 같은 구체 정보는 살리고, 인사·서명은 빼고, 목록 기호 없이 문장으로, 서론 없이 요약문만 출력해."
+)
+_CONDENSE_MEMO = {}
+
+
+def condense(text, limit=RAW_LINE_LEN, summarize=None):
+    """원문 한 줄(Teams 메시지·지난 대화·Claude Code 요청)을 보고서용으로.
+    limit 이하면 원문 그대로, 넘으면 글자 수로 자르지 않고 LLM으로 요약한다 (응답 캐시).
+    LLM을 못 쓰면 문장 경계에서 끊는다. summarize(text) → 요약문 (테스트 주입용)."""
+    text = clean_text(text, None)
+    if len(text) <= limit:
+        return text
+    if text not in _CONDENSE_MEMO:
+        summary = None
+        try:
+            if summarize is None:
+                from weekly_report.ai.llm_summarizer import LLMSummarizer
+                summary = LLMSummarizer().complete(CONDENSE_PROMPT, text, max_tokens=800,
+                                                   max_input=8000, temperature=0, cache=True)
+            else:
+                summary = summarize(text)
+        except Exception as error:
+            print(f"Warning: message condense failed: {error}")
+        summary = clean_text(summary, None) if summary else ""
+        if not summary:  # 실패는 기억하지 않음 — 다음에 다시 시도
+            return clean_text(text, limit)
+        _CONDENSE_MEMO[text] = f"(요약) {summary}"
+    return _CONDENSE_MEMO[text]
 
 
 def _strip_prefix(value, prefixes):
@@ -327,7 +369,7 @@ def _add_outlook(collector, activity, details, when, **_):
         collector.count(item, "수신")
     elif action == "meeting":
         item = collector.get("meeting", "회의")
-        location = clean_text(details.get("location") or "", 40)
+        location = clean_text(details.get("location") or "", 100)
         line = f"{when:%m/%d %H:%M} {subject}"
         collector.add_line(item, f"{line} ({location})" if location else line)
     else:
@@ -362,7 +404,7 @@ def _add_teams(collector, activity, details, when, *, me_name=None, teams_scope=
         item["title"] = f"{kind} - {partner}"
         item["named"] = True
     collector.count(item, "보낸 메시지" if from_me else "받은 메시지")
-    text = clean_text(details.get("text") or "", 100)
+    text = condense(details.get("text") or "")
     if text and (from_me or teams_scope == "all"):
         collector.add_line(item, text)
     return True
@@ -372,7 +414,7 @@ def _add_slack(collector, activity, details, when, **_):
     channel = details.get("channel") or _strip_prefix(activity.get("file_path"), ("Slack:",))
     item = collector.get(channel, f"#{channel}" if channel else "(채널)")
     collector.count(item, "메시지")
-    text = clean_text(details.get("text") or "", 100)
+    text = condense(details.get("text") or "")
     if text:
         collector.add_line(item, text)
     return True
@@ -402,7 +444,7 @@ def _add_chrome(collector, activity, details, when, **_):
     if url in visits:
         visits[url]["count"] += 1
     else:
-        visits[url] = {"title": clean_text(details.get("title") or "", 60), "count": 1}
+        visits[url] = {"title": clean_text(details.get("title") or "", 200), "count": 1}
     item["lines"] = [
         f"{v['title'] + ' — ' if v['title'] else ''}"
         f"{u if len(u) <= 120 else u[:119] + '…'}"
@@ -460,7 +502,7 @@ def _add_ide(collector, activity, details, when, **_):
         return True
     if action == "claude_interaction":
         # 작업 요약이 없는 날을 위한 대비: 요청 원문 (요약이 하나라도 있으면 숨김)
-        prompt = clean_text(details.get("display") or "", 150)
+        prompt = condense(details.get("display") or "")
         if not prompt:
             return False
         item = _project_item(collector, details.get("project") or activity.get("file_path"))

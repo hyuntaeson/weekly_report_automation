@@ -29,7 +29,15 @@ DEFAULT_SETTINGS = {
     "rag_past_weeks": 4,
     # 활동 벡터 보관 기간(주) — 지난 주는 주간 요약 벡터로 남기고 삭제 (storage/retention.py)
     "vector_retention_weeks": 12,
+    # 근거 제외 키워드 — 파일 경로·제목·내용에 들어 있으면 RAG·STEP 3 근거로 쓰지 않음
+    # (이 프로그램 테스트 메모·이전 보고서 복사본이 원본 대화 대신 인용되는 것 방지)
+    "evidence_exclude_keywords": ["주간보고 자동작성", "weekly_report", "WeeklyPulse"],
 }
+# 근거에서 통째로 빼는 프로그램 — IDE 기록은 거의 이 프로그램 개발 요청이라 업무 근거가 아님
+# (STEP 1 프로그램별 기록에는 그대로 남는다)
+EVIDENCE_EXCLUDED_PROGRAMS = {"Claude Code (IDE)", "Devin (IDE)"}
+# 이 중 하나라도 있어야 근거 후보 (메시지·요약·메일 제목·채팅방·페이지 제목·메모 추가 내용)
+EVIDENCE_CONTENT_KEYS = ("text", "summary", "subject", "chat", "title", "content_added")
 # 코사인 유사도 기준 — 이 임베딩 모델에서 관련 기록은 보통 0.45~0.55, 무관한 기록은 0.2~0.3
 MIN_SCORE = 0.40
 WEEK_TOP_K = 10
@@ -95,8 +103,8 @@ def parse_cited_bullets(text, evidence_count):
 
 
 def evidence_label(activity, when):
-    """보고서 근거 표시용 짧은 출처: '09/25 Teams · 운영&서버 방'.
-    본문(메시지·요약)은 넣지 않는다 — 길고 인증번호 같은 민감 내용이 섞일 수 있어서."""
+    """보고서 근거 표시: '09/25 Teams · 운영&서버 방 — "거래저장 실패 원인 확인 중입니다."'
+    출처 이름은 자르지 않고, 무엇을 말한 기록인지 요지(첫 문장)를 붙인다."""
     details = activity.get("details")
     if isinstance(details, str):
         try:
@@ -107,7 +115,72 @@ def evidence_label(activity, when):
     program = classify_program(activity) or activity.get("source") or ""
     where = details.get("chat") or details.get("name") or details.get("subject") \
         or details.get("title") or os.path.basename(str(activity.get("file_path") or "")) or ""
-    return f"{when:%m/%d} {program}" + (f" · {clean_text(where, 30)}" if where else "")
+    where = clean_text(where, 200)  # 상한은 비정상적으로 긴 URL 대비용
+    label = f"{when:%m/%d} {program}" + (f" · {where}" if where else "")
+    gist = evidence_gist(details)
+    if gist and gist not in where:
+        label += f' — "{gist}"'
+    return label
+
+
+# 인증번호·비밀번호가 섞인 메시지는 보고서에 옮기지 않는다 (요지 생략, 출처만 표시)
+_SENSITIVE_RE = re.compile(r"인증\s*(번호|코드)|비밀\s*번호|패스워드|OTP|password|token|토큰", re.IGNORECASE)
+# 요약 앞머리의 제목줄('# 핵심 요약' 등) — 내용이 아니라 빼고 시작
+_SUMMARY_HEADING_RE = re.compile(r"^(핵심\s*)?요약\s*[:：]?\s*")
+# 문장 부호 없이 이어지는 원문(로그·알림 전문)에만 쓰는 상한 — 문장으로 끝나는 요지는 자르지 않음
+EVIDENCE_GIST_MAX = 200
+
+
+def evidence_gist(details):
+    """근거 요지 — 메시지·요약·메모 추가 내용에서 내용이 있는 첫 문장.
+    '팀장님.' 같은 호칭·대답 문장은 건너뛰고, 문장은 길이와 무관하게 통째로 쓴다.
+    문장 부호 없이 이어지는 원문만 EVIDENCE_GIST_MAX 근처 단어 경계에서 끊는다."""
+    raw = str(details.get("text") or details.get("summary") or details.get("content_added") or "")
+    if not raw.strip() or _SENSITIVE_RE.search(raw):
+        return ""
+    # 여러 줄 요약(# 제목 / 항목: 내용 …)은 한 덩어리로 펴면 요지가 묻히므로 제목줄을 건너뛴 첫 내용 줄
+    lines = (_SUMMARY_HEADING_RE.sub("", clean_text(line, None))
+             for line in raw.splitlines() if not line.lstrip().startswith("#"))
+    text = next((line for line in lines if line), "")
+    sentences = [s for s in re.split(r"(?<=[.!?。])\s+", text) if s and not is_trivial_reply(s)]
+    if not sentences:
+        return ""
+    first = sentences[0]
+    if re.search(r"[.!?。]$", first) or len(first) <= EVIDENCE_GIST_MAX:
+        return first
+    return clean_text(first, EVIDENCE_GIST_MAX)
+
+
+# 호칭('팀장님')·문장부호를 걷어낸 뒤 이것만 남으면 단순 대답
+_TRIVIAL_REPLY_RE = re.compile(
+    r"^(네+|넵|넹|예|응|ㅇㅇ|ㅇㅋ|ok|오케이|확인(했습니다|했어요|부탁드립니다|부탁드려요)?|알겠습니다|"
+    r"감사합니다|고맙습니다|수고(하셨습니다|많으셨습니다)?)?$", re.IGNORECASE)
+
+
+def is_trivial_reply(text):
+    """'네 팀장님.' '확인했습니다~' 처럼 내용 없는 대답인지"""
+    core = re.sub(r"\S*님", "", clean_text(text, None))
+    core = re.sub(r"[\s.!~?,^]+|요$", "", core)
+    return bool(_TRIVIAL_REPLY_RE.match(core))
+
+
+def is_evidence_noise(activity, keywords):
+    """RAG·STEP 3 근거로 쓰면 안 되는 활동: IDE 기록, 또는 경로·제목·내용에 제외 키워드 포함"""
+    if classify_program(activity) in EVIDENCE_EXCLUDED_PROGRAMS:
+        return True
+    keywords = [k.lower() for k in keywords if k and k.strip()]
+    if not keywords:
+        return False
+    details = activity.get("details")
+    if isinstance(details, str):  # 수집기에 따라 한글이 \uXXXX로 저장돼 있어 풀어서 비교
+        try:
+            details = json.loads(details)
+        except (TypeError, ValueError):
+            pass
+    if not isinstance(details, str):
+        details = json.dumps(details or {}, ensure_ascii=False)
+    haystack = f"{activity.get('file_path') or ''} {details}".lower()
+    return any(k in haystack for k in keywords)
 
 
 class TopicQueryRAG:
@@ -126,6 +199,7 @@ class TopicQueryRAG:
         excluded = teams_settings.get("excluded_chats", [])
         self.excluded_ids = {c.get("id") for c in excluded if isinstance(c, dict)}
         self.excluded_titles = {c.get("title") for c in excluded if isinstance(c, dict)}
+        self.noise_keywords = load_report_settings().get("evidence_exclude_keywords", [])
 
     @property
     def enabled(self):
@@ -134,8 +208,9 @@ class TopicQueryRAG:
     # ---------- 검색 ----------
 
     def eligible(self, activity):
-        """보고서 STEP 2와 같은 기준: 내 업무 + 제외 채팅방 아님 + Teams 보고 범위."""
-        if not is_my_work(activity, self.me_name):
+        """보고서 STEP 2와 같은 기준: 내 업무 + 제외 채팅방 아님 + Teams 보고 범위
+        + 근거 노이즈 아님(IDE·제외 키워드) + 이름뿐인 기록 아님."""
+        if not is_my_work(activity, self.me_name) or is_evidence_noise(activity, self.noise_keywords):
             return False
         details = activity.get("details")
         if isinstance(details, str):
@@ -144,11 +219,14 @@ class TopicQueryRAG:
             except (TypeError, ValueError):
                 details = {}
         details = details if isinstance(details, dict) else {}
-        if classify_program(activity) == "Chrome":
-            # 제목 없는 방문 URL(게이트웨이·로그인 페이지 등)은 내용이 없어 근거로 쓰지 않음
-            return bool(details.get("title"))
+        # 이름뿐인 기록(첨부파일·스크린샷·제목 없는 방문 URL·파일 이동)은 근거로 주면
+        # LLM이 내용과 무관한 답에 번호를 붙이므로 제외 — 메모·메일·대화처럼 내용이 있는 것만
+        if not any(str(details.get(k) or "").strip() for k in EVIDENCE_CONTENT_KEYS):
+            return False
         if activity.get("source") != "teams":
             return True
+        if activity.get("action") == "message" and is_trivial_reply(details.get("text")):
+            return False  # '네 팀장님.' 같은 대답은 근거가 되지 않는다 (LLM이 아무 답에나 번호를 붙임)
         if details.get("chat_id") in self.excluded_ids or details.get("chat") in self.excluded_titles:
             return False
         if activity.get("action") == "message" and self.teams_scope != "all":

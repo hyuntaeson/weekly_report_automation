@@ -56,7 +56,7 @@ PROMPT_TEMPLATES = {
         "다음은 한 문서의 이전 버전과 새 버전 사이에 바뀐 줄 목록이야. "
         "[+]는 새로 생겼거나 바뀐 뒤의 줄, [-]는 사라졌거나 바뀌기 전의 줄이고 "
         "엑셀은 '[시트명] 셀 | 셀' 형식이야. 짝이 맞는 [-]/[+]는 '수정'으로 해석해서, "
-        "무엇을 어떻게 바꿨는지 한국어로 최대 500자 이내에서 요약해줘. "
+        "무엇을 어떻게 바꿨는지 한국어로 핵심 위주로 요약하되, 의미가 끊기지 않게 써줘. "
         "변경이 적으면 짧게 1문장으로, 많으면 중요한 변경부터 구체적으로 쓰고 "
         "사소한 것은 '등'으로 묶어. "
         "'OO 항목 추가', 'OO를 XX로 변경', 'OO를 A차→B차로 이동'처럼 구체적으로 쓰고, "
@@ -66,7 +66,7 @@ PROMPT_TEMPLATES = {
         "너는 개발자의 업무 일지를 정리하는 비서야. <requests> 안의 각 줄은 개발자가 하루 동안 "
         "AI 코딩 도구에 보낸 지시문 기록이고, 모두 그대로 작업이 진행됐다고 간주해. "
         "각 지시문을 '~ 구현', '~ 수정', '~ 개선', '~ 조사' 같은 완료형 작업 항목으로 바꿔 쓰고, "
-        "비슷한 항목은 하나로 합쳐 '1. …', '2. …' 번호 목록으로 출력해 (한국어, 전체 500자 이내). "
+        "비슷한 항목은 하나로 합쳐 '1. …', '2. …' 번호 목록으로 출력해 (한국어). "
         "예) 입력 '- 로그인 화면에 비밀번호 찾기 버튼 추가해줘' / '- 버튼 색을 파란색으로 바꿔줘' "
         "→ 출력 '1. 로그인 화면에 비밀번호 찾기 버튼 추가 및 버튼 색상 변경'. "
         "질문·되묻기·필요한 정보 요청·설명은 절대 쓰지 말고 번호 목록만 출력해."
@@ -203,7 +203,9 @@ class LLMSummarizer:
 
     def summarize(self, text, max_len=300, template="default"):
         """텍스트를 LLM으로 요약. template은 PROMPT_TEMPLATES 키
-        (default/file/teams/mail). 짧은 입력·비활성·실패 시 폴백."""
+        (default/file/teams/mail). 짧은 입력·비활성·실패 시 폴백.
+        max_len은 '이보다 짧으면 요약 없이 원문 사용' 기준일 뿐, 요약 길이를 글자 수로 제한하지 않는다
+        (의미 전달 우선, 사용자 지정 2026-10-02)."""
         text = (text or "").strip()
         if not text:
             return ""
@@ -214,6 +216,7 @@ class LLMSummarizer:
         if len(text) <= max_len:
             return text
         system = PROMPT_TEMPLATES.get(template, DEFAULT_SYSTEM_PROMPT)
-        # 한국어는 대략 1자당 1토큰 이상이라, 요청 길이에 맞춰 응답 상한을 넉넉히
-        max_tokens = max(int(self.config.get("max_tokens") or 150), max_len * 2)
-        return self.complete(f"{system} (최대 {max_len}자)", text, max_tokens=max_tokens)
+        # 글자 수 대신 의미가 전달되게 요청 — 응답 상한은 잘리지 않을 만큼 넉넉히
+        max_tokens = max(int(self.config.get("max_tokens") or 150), 1500)
+        return self.complete(f"{system} 글자 수에 얽매이지 말고, 핵심만 간결하게 하되 의미가 끊기지 않게 써줘.",
+                             text, max_tokens=max_tokens)
