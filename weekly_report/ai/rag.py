@@ -40,6 +40,12 @@ EVIDENCE_EXCLUDED_PROGRAMS = {"Claude Code (IDE)", "Devin (IDE)"}
 EVIDENCE_CONTENT_KEYS = ("text", "summary", "subject", "chat", "title", "content_added")
 # 코사인 유사도 기준 — 이 임베딩 모델에서 관련 기록은 보통 0.45~0.55, 무관한 기록은 0.2~0.3
 MIN_SCORE = 0.40
+# 문장과 그 문장이 인용한 근거의 유사도가 이보다 낮으면 그 인용은 엉뚱한 번호로 보고 지운다.
+# 실측(9/28 주 보고서): 잘못 붙은 인용 0.20~0.40, 맞는 인용 대부분 0.44~0.75
+SUPPORT_MIN_SCORE = 0.42
+# 0.30~0.42는 임베딩만으론 구분이 안 되는 구간(맞는 인용 0.406 사례) → 핵심어가 근거 원문에 있는지로 판정
+GRAY_MIN_SCORE = 0.30
+KEYWORD_MIN_OVERLAP = 0.5
 WEEK_TOP_K = 10
 PAST_TOP_K = 3
 
@@ -102,6 +108,71 @@ def parse_cited_bullets(text, evidence_count):
     return bullets
 
 
+def _cosine(a, b):
+    import numpy as np
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    return float(a @ b / denom) if denom else 0.0
+
+
+# 핵심어 비교에서 뺄 조사·어미 꼬리와 흔한 말
+_JOSA_RE = re.compile(r"(은|는|이|가|을|를|에|에서|의|로|으로|과|와|도|만|까지|부터|이며|하며|했으며|했고|하고|"
+                      r"입니다|습니다|했습니다|합니다|됩니다|되었습니다|상태|예정)$")
+_COMMON_WORDS = {"확인", "필요", "진행", "완료", "관련", "현재", "이번", "주간", "내용", "상태", "예정", "중입니다"}
+
+
+def keyword_overlap(claim, evidence_text):
+    """문장의 핵심어(2자 이상, 조사·흔한 말 제외) 중 근거 원문에 실제로 들어 있는 비율 (0~1)"""
+    words = set()
+    for token in re.findall(r"[가-힣A-Za-z0-9%./:]+", claim):
+        token = _JOSA_RE.sub("", token)
+        if len(token) >= 2 and token not in _COMMON_WORDS:
+            words.add(token.lower())
+    if not words:
+        return 0.0
+    haystack = (evidence_text or "").lower()
+    return sum(w in haystack for w in words) / len(words)
+
+
+def check_citations(items, evidence_vectors, embed, min_score=SUPPORT_MIN_SCORE,
+                    evidence_texts=None):
+    """문장마다 인용한 근거가 실제로 그 내용을 담고 있는지 확인 (하네스 검증).
+    ① 임베딩 유사도 ≥ min_score → 유지, < GRAY_MIN_SCORE → 삭제
+    ② 그 사이 애매한 구간은 문장 핵심어가 근거 원문 전체(evidence_texts)에 들어 있으면 유지
+       — 긴 문서는 저장 벡터가 앞부분 위주라 뒤쪽 내용을 인용하면 유사도가 낮게 나옴
+    items: [(문장, [근거 번호])], evidence_vectors: {번호: 벡터}, embed(texts) → 벡터 목록,
+    evidence_texts: {번호: 근거 원문 전체}.
+    반환: [(문장, 남은 번호)] — 지운 번호는 문장에서도 뺀다. 벡터가 없는 근거는 판단할 수 없어 그대로 둔다.
+    임베딩 실패 시 검증 없이 그대로 반환."""
+    evidence_texts = evidence_texts or {}
+
+    def supported(claim, vector, n):
+        if evidence_vectors.get(n) is None:
+            return True
+        score = _cosine(vector, evidence_vectors[n])
+        if score >= min_score:
+            return True
+        return score >= GRAY_MIN_SCORE and keyword_overlap(claim, evidence_texts.get(n)) >= KEYWORD_MIN_OVERLAP
+
+    if not items:
+        return items
+    claims = [re.sub(r"\s*\[\d+\]", "", text).strip() for text, _ in items]
+    try:
+        vectors = embed(claims)
+    except Exception as error:
+        print(f"Warning: citation check skipped: {error}")
+        vectors = None
+    if not vectors or len(vectors) != len(items):
+        return items
+    checked = []
+    for (text, refs), vector, claim in zip(items, vectors, claims):
+        kept = [n for n in refs if supported(claim, vector, n)]
+        for n in set(refs) - set(kept):
+            text = text.replace(f"[{n}]", "")
+        checked.append((re.sub(r"\s{2,}", " ", text).strip(), kept))
+    return checked
+
+
 def evidence_label(activity, when):
     """보고서 근거 표시: '09/25 Teams · 운영&서버 방 — "거래저장 실패 원인 확인 중입니다."'
     출처 이름은 자르지 않고, 무엇을 말한 기록인지 요지(첫 문장)를 붙인다."""
@@ -131,6 +202,11 @@ _SUMMARY_HEADING_RE = re.compile(r"^(핵심\s*)?요약\s*[:：]?\s*")
 EVIDENCE_GIST_MAX = 200
 
 
+# 줄 앞의 목록 번호·기호 ('1.', '2)', '■', '▶', '✅', '①', '1️⃣')
+_LIST_MARK_RE = re.compile(r"^(?:\d{1,2}[.)](?!\d)\s*|[■□▶▷►●○◆◇✅☑✔•·\-*]\s*|[①-⑳]\s*|\d️?⃣\s*)+")
+GIST_MIN_LINE = 12  # 이보다 짧은 줄은 소제목으로 보고 다음 내용 줄을 요지로
+
+
 def evidence_gist(details):
     """근거 요지 — 메시지·요약·메모 추가 내용에서 내용이 있는 첫 문장.
     '팀장님.' 같은 호칭·대답 문장은 건너뛰고, 문장은 길이와 무관하게 통째로 쓴다.
@@ -138,10 +214,12 @@ def evidence_gist(details):
     raw = str(details.get("text") or details.get("summary") or details.get("content_added") or "")
     if not raw.strip() or _SENSITIVE_RE.search(raw):
         return ""
-    # 여러 줄 요약(# 제목 / 항목: 내용 …)은 한 덩어리로 펴면 요지가 묻히므로 제목줄을 건너뛴 첫 내용 줄
-    lines = (_SUMMARY_HEADING_RE.sub("", clean_text(line, None))
-             for line in raw.splitlines() if not line.lstrip().startswith("#"))
-    text = next((line for line in lines if line), "")
+    # 여러 줄 요약(# 제목 / 항목: 내용 …)은 한 덩어리로 펴면 요지가 묻히므로, 제목줄·목록 번호('1.', '■', '✅')를
+    # 떼고 '산출물'·'요구사항 정의' 같은 짧은 소제목 줄은 건너뛴 첫 내용 줄
+    lines = [_LIST_MARK_RE.sub("", _SUMMARY_HEADING_RE.sub("", clean_text(line, None))).strip()
+             for line in raw.splitlines() if not line.lstrip().startswith("#")]
+    lines = [line for line in lines if line and not is_trivial_reply(line)]
+    text = next((line for line in lines if len(line) >= GIST_MIN_LINE), lines[0] if lines else "")
     sentences = [s for s in re.split(r"(?<=[.!?。])\s+", text) if s and not is_trivial_reply(s)]
     if not sentences:
         return ""
@@ -306,6 +384,34 @@ class TopicQueryRAG:
             results = list(pool.map(lambda job: self._summarize(*job), jobs))
         return [section for section in results if section]
 
+    def evidence_vectors(self, evidence):
+        """근거 목록(각 항목에 'activity') → {번호: 저장된 활동 벡터} (VectorDB·메모리 재사용, 새 임베딩 없음)"""
+        activities = [e["activity"] for e in evidence]
+        try:
+            vectors = self.clusterer._embed_with_cache(
+                activities, [self.clusterer._activity_text(a) for a in activities]) or []
+        except Exception as error:
+            print(f"Warning: evidence vectors unavailable: {error}")
+            vectors = []
+        return {i: v for i, v in enumerate(vectors, start=1) if v is not None}
+
+    @staticmethod
+    def evidence_texts(evidence):
+        """근거 목록 → {번호: 원문 전체} (경로 + 메시지·요약·제목 등, 자르지 않음) — 인용 핵심어 확인용"""
+        texts = {}
+        for i, e in enumerate(evidence, start=1):
+            activity = e["activity"]
+            details = activity.get("details")
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except (TypeError, ValueError):
+                    details = {}
+            details = details if isinstance(details, dict) else {}
+            parts = [str(activity.get("file_path") or "")] + [str(details.get(k) or "") for k in EVIDENCE_CONTENT_KEYS]
+            texts[i] = clean_text(" ".join(parts), None)
+        return texts
+
     def _summarize(self, topic, hits, old):
         evidence = []
         for past, items in ((False, hits), (True, old)):
@@ -315,7 +421,8 @@ class TopicQueryRAG:
                     text = self.clusterer._activity_text(activity)
                     if classify_program(activity) == "Chrome":
                         text = f"{evidence_label(activity, when)} {text}"  # 방문 URL만으론 뜻을 몰라 페이지 제목을 붙임
-                    evidence.append({"label": evidence_label(activity, when), "past": past, "text": text})
+                    evidence.append({"label": evidence_label(activity, when), "past": past, "text": text,
+                                     "activity": activity})
         if not evidence:
             return None
         body = "<evidence>\n" + "\n".join(
@@ -327,7 +434,14 @@ class TopicQueryRAG:
         bullets = parse_cited_bullets(output, len(evidence))
         if output and output.strip().upper().startswith("NONE"):
             return None  # 검색은 걸렸지만 LLM이 주제와 무관하다고 판단
-        if not bullets:
+        if bullets:
+            # 엉뚱한 근거 번호는 지우고, 맞는 근거가 하나도 안 남은 불릿은 근거 없는 주장으로 버림
+            bullets = [b for b in check_citations(bullets, self.evidence_vectors(evidence), self.clusterer.embed,
+                                                  evidence_texts=self.evidence_texts(evidence))
+                       if b[1]]
+            if not bullets:
+                return None
+        else:
             # LLM 실패·형식 오류 → 이번 주 근거 제목으로 대체
             bullets = [(e["label"], [i]) for i, e in enumerate(evidence[:3], start=1) if not e["past"]]
         # 인용된 근거만 1부터 다시 번호 매김 ([2][5] → [1][2]).

@@ -833,6 +833,94 @@ def t_evidence_label():
               "clean_text 무제한·문장/단어 경계 자르기")
 
 
+def t_llm_output_check():
+    """LLM 출력 검증(하네스): 요약 거절·되묻기 불합격→재요청→실패 시 None(캐시 안 함), 서두 제거,
+    업무 문장 속 '확인할 수 없' 오탐 없음 / 근거 번호-문장 관련성 검사 / STEP 3 '(보고 내용)' 표시"""
+    from weekly_report.ai.llm_summarizer import LLMSummarizer, check_summary
+    from weekly_report.ai.rag import check_citations
+    from weekly_report.ai.questions import parse_qa
+    cases = {
+        "죄송하지만 요약할 내용이 없습니다.": None,
+        "텍스트를 제공해 주시면 요약해 드리겠습니다.": None,
+        "요약하려면 원문을 공유해 주시겠어요?": None,
+        "다음은 메일 요약입니다:\n10월2차 배포 일정 공유": "10월2차 배포 일정 공유",
+        "요약: 직영 20개점 점검 완료": "직영 20개점 점검 완료",
+        "DB 복구가 실패해 원인은 확인할 수 없는 상태이며 하드 교체를 검토 중": "DB 복구가 실패해 원인은 확인할 수 없는 상태이며 하드 교체를 검토 중",
+    }
+    wrong = {k: check_summary(k) for k, v in cases.items() if check_summary(k) != v}
+    if wrong:
+        return fail(f"요약 검증 판정 오류: {wrong}")
+
+    class FakeChain:
+        def __init__(self, outputs):
+            self.outputs, self.calls = list(outputs), []
+        def invoke(self, inputs):
+            self.calls.append(inputs["system"])
+            return self.outputs.pop(0)
+    llm = LLMSummarizer.__new__(LLMSummarizer)
+    llm.config, llm.enabled = {"enabled": True, "api_key": "x"}, True
+    puts = []
+    llm._cache_get, llm._cache_put = (lambda key: None), (lambda key, value: puts.append(value))
+    for outputs, expected in ((["죄송합니다, 요약할 내용이 없습니다.", "배포 완료 공유"], "배포 완료 공유"),
+                              (["죄송합니다.", "텍스트를 제공해 주세요."], None)):
+        chain = FakeChain(outputs)
+        llm._chain = lambda *a, chain=chain: chain
+        puts.clear()
+        got = llm.complete("요약해", "원문", temperature=0, cache=True, validate=check_summary)
+        if got != expected or len(chain.calls) != 2 or "설명·사과·되묻기 없이" not in chain.calls[1]:
+            return fail(f"재요청 동작 오류: {got} / 호출 {len(chain.calls)}회")
+        if puts != ([expected] if expected else []):
+            return fail(f"불합격 응답이 캐시됨: {puts}")
+
+    # 근거 관련성: 문장 벡터와 근거 벡터가 먼 번호는 지움, 벡터 없는 근거는 판단 보류
+    items = [("국민QR 환불 개선 완료 [1][2]", [1, 2]), ("교육 일정 공유 [3]", [3]), ("배포 완료 [4]", [4])]
+    embed = lambda texts: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    evidence = {1: [1, 0, 0], 2: [0, 1, 0], 3: [1, 0, 0]}  # [2]는 무관, [3]도 무관, [4]는 벡터 없음
+    checked = check_citations(items, evidence, embed)
+    if checked != [("국민QR 환불 개선 완료 [1]", [1]), ("교육 일정 공유", []), ("배포 완료 [4]", [4])]:
+        return fail(f"근거 관련성 검사 오류: {checked}")
+    if check_citations(items, evidence, lambda texts: None) != items:
+        return fail("임베딩 실패 시 원본 유지 안 됨")
+    # 애매한 구간(0.30~0.42): 문장 핵심어가 근거 원문에 있으면 유지, 없으면 삭제
+    gray = {1: [0.35, 0.9367]}  # 문장 벡터 [1, 0]과의 유사도 0.35
+    claim = [("안면결제 테스트 장비 9월 초 제공 예정 [1]", [1])]
+    keep = check_citations(claim, gray, lambda t: [[1, 0]],
+                           evidence_texts={1: "개발 현황: 프로그램 개발 100% 완료, 테스트 장비 9월 초 제공 예정 안면결제"})
+    drop = check_citations(claim, gray, lambda t: [[1, 0]], evidence_texts={1: "AI 활용 개발 성과 보고서"})
+    if keep[0][1] != [1] or drop[0][1] != []:
+        return fail(f"애매한 구간 핵심어 판정 오류: {keep} / {drop}")
+
+    # 사실 대조(LLM-as-judge): 근거와 다르면 '근거와 다름' 표시, 근거에 없으면 '확인 필요', 내용은 고치지 않음
+    from weekly_report.ai.questions import DIFF_MARK, fact_check_answers
+    answers = [("구분자는 운임 계산용입니다. [1]", [1]), ("TID 개발/운영 동일 [2]", [2]),
+               ("일정 확정 [3]", [3]), ("확인 필요", [])]
+    texts = {1: "CJ대한통운 정산 시 동일권/타권 구분 필요", 2: "KICC 개발기 운영기 동일 TID", 3: "산출물 목록"}
+    seen = []
+    judged = fact_check_answers(answers, texts, lambda s, b: seen.append(b) or "1: DIFF\n2: OK\n3: NONE")
+    if judged != [f"구분자는 운임 계산용입니다. [1] {DIFF_MARK}", "TID 개발/운영 동일 [2]",
+                  "일정 확정 [3] (확인 필요)", "확인 필요"] or "CJ대한통운 정산" not in seen[0]:
+        return fail(f"사실 대조 표시 오류: {judged}")
+    if fact_check_answers(answers, texts, lambda s, b: "") != [a for a, _ in answers]:
+        return fail("판정 실패 시 원본 유지 안 됨")
+    # '확인 필요'만 남은 답변 → 질문과 가장 가까운 보고 내용으로 채움
+    from weekly_report.ai.questions import fill_bare_answers, is_bare_answer
+    if not is_bare_answer("확인 필요 (보고 내용)") or is_bare_answer("개발 완료, 일정은 확인 필요 [1]"):
+        return fail("'확인 필요'만 남은 답변 판정 오류")
+    filled = fill_bare_answers(["안면결제 테스트는?", "배포는?"], ["확인 필요.", "10월 배포 완료 [1]"],
+                               ["조직도 업데이트", "안면결제 개발 완료, 장비 9월 초 제공 예정"], [[1, 0], [0, 1]],
+                               lambda qs: [[0.1, 0.9]])
+    if filled != ["보고 기준: 안면결제 개발 완료, 장비 9월 초 제공 예정 — 질문하신 부분은 확인 필요합니다. (보고 내용)",
+                  "10월 배포 완료 [1]"]:
+        return fail(f"빈 답변 폴백 오류: {filled}")
+    qa = parse_qa("Q: 배포 일정은?\nA: 10월 7일 배포 예정입니다. (보고 내용)\nQ: 원인은?\nA: 원인 분석 중입니다.\n"
+                  "Q: 언제부터야?\nA: 확인 필요 (보고 내용)", 3)
+    if (qa[0][1] != "10월 7일 배포 예정입니다. (보고 내용)" or not qa[1][1].endswith("(확인 필요)")
+            or qa[2][1] != "확인 필요"):
+        return fail(f"STEP 3 근거 표시 오류: {qa}")
+    return ok("요약 거절·되묻기 재요청→실패 시 None·캐시 안 함, 서두 제거, 업무 문장 오탐 없음, "
+              "무관한 근거 번호 제거(애매하면 핵심어 확인), 답변-근거 사실 대조 표시, '(보고 내용)'·'(확인 필요)' 표시")
+
+
 def t_rag_sections():
     """실데이터 RAG: 이번 주 활동 → 주제별 근거 인용 요약 → Markdown 'STEP 2 주제 질의 요약'"""
     from weekly_report.report.generator import ReportGenerator
@@ -916,8 +1004,8 @@ def t_expected_qa():
             cited = {int(n) for n in re.findall(r"\[(\d+)\]", item["a"])}
             if not cited <= numbers or not set(item["past"]) <= past_ids:
                 return fail(f"[{s['name']}] 번호 불일치: {item}")
-            if not cited and "확인 필요" not in item["a"]:
-                return fail(f"[{s['name']}] 근거도 '확인 필요'도 없는 답변: {item['a']}")
+            if not cited and "확인 필요" not in item["a"] and "보고 내용" not in item["a"]:
+                return fail(f"[{s['name']}] 근거도 '확인 필요'·'(보고 내용)'도 없는 답변: {item['a']}")
     md = rg.generate_markdown(rg.compose_weekly_data(week_start, week_end, acts, {"expected_qa": sections}))
     if "## STEP 3. 예상 질문 & 답변" not in md:
         return fail("Markdown에 STEP 3 없음")
@@ -993,6 +1081,7 @@ TESTS = [
     ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
     ("AI-08", "AI 분석", "근거 노이즈 필터 (IDE·제외 키워드·이름뿐인 기록)", t_evidence_noise_filter),
     ("AI-09", "AI 분석", "근거 표기 (출처 전체·내용 요지)", t_evidence_label),
+    ("AI-10", "AI 분석", "LLM 출력 검증 (요약 형식·근거 관련성, 하네스)", t_llm_output_check),
     ("AI-05", "AI 분석", "RAG 주제 질의 섹션 (실데이터)", t_rag_sections),
     ("AI-06", "AI 분석", "STEP 3 예상 질문 출력 검증 (하네스)", t_expected_qa_check),
     ("AI-07", "AI 분석", "STEP 3 예상 질문 & 답변 (실데이터)", t_expected_qa),

@@ -170,9 +170,10 @@ def condense(text, limit=RAW_LINE_LEN, summarize=None):
         summary = None
         try:
             if summarize is None:
-                from weekly_report.ai.llm_summarizer import LLMSummarizer
+                from weekly_report.ai.llm_summarizer import LLMSummarizer, check_summary
                 summary = LLMSummarizer().complete(CONDENSE_PROMPT, text, max_tokens=800,
-                                                   max_input=8000, temperature=0, cache=True)
+                                                   max_input=8000, temperature=0, cache=True,
+                                                   validate=check_summary)
             else:
                 summary = summarize(text)
         except Exception as error:

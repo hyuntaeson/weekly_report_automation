@@ -14,10 +14,34 @@ LangChain 미설치/프록시 실패 시 기존처럼 None을 반환해 호출�
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 
 from weekly_report import paths
+
+# ---------- 요약 출력 검증 (하네스) ----------
+# 요약 대신 거절·되묻기를 한 응답 — 첫 문장이 이런 메타 발화면 불합격
+# (본문 중간의 '확인할 수 없는 상태' 같은 업무 표현은 걸리지 않도록 응답 앞부분만 본다)
+_REFUSAL_RE = re.compile(
+    r"^\s*(죄송|요약할\s*(내용|텍스트|것)이?\s*없|제공(된|해\s*주신)\s*(텍스트|내용)[^.\n]{0,20}(없|부족|불충분)|"
+    r"(텍스트|내용)를?\s*(제공|공유)해\s*주|I'?m sorry|I cannot|I can't|As an AI)",
+    re.IGNORECASE,
+)
+# 사용자에게 자료를 더 달라고 되묻는 꼬리 — 응답 어디에 있든 불합격
+_ASK_BACK_RE = re.compile(r"(제공|공유|알려)\s*해?\s*주시면|(주시겠어요|주실 수 있을까요|주시겠습니까)\s*\??\s*$")
+# 요약문 앞의 서두 한 줄 ('다음은 ~ 요약입니다:', '요약:') — 떼어내고 본문만 쓴다
+_PREAMBLE_RE = re.compile(r"^\s*((다음은|아래는)[^\n]{0,60}(요약|정리)[^\n]*|요약\s*결과?|요약)\s*[:：]\s*\n?")
+RETRY_NOTE = " (중요: 설명·사과·되묻기 없이 요청한 결과물만 바로 출력해.)"
+
+
+def check_summary(text):
+    """요약 응답 검증: 거절·되묻기면 None, 서두 한 줄은 떼고 본문만 반환."""
+    text = (text or "").strip()
+    if not text or _REFUSAL_RE.search(text) or _ASK_BACK_RE.search(text):
+        return None
+    text = _PREAMBLE_RE.sub("", text, count=1).strip()
+    return text or None
 
 # temperature 0(결정적) 호출의 응답 캐시 — 같은 입력이면 같은 출력이므로 결과는 그대로, 재생성만 빨라짐
 CACHE_DB = paths.LLM_CACHE
@@ -139,11 +163,13 @@ class LLMSummarizer:
     # ---------- 공개 API ----------
 
     def complete(self, system_prompt, user_text, max_tokens=None, temperature=0.3,
-                 max_input=4000, cache=False):
+                 max_input=4000, cache=False, validate=None):
         """임의 프롬프트로 LLM 호출. 체인 실패 시 None.
         max_tokens는 응답 길이 상한(미지정 시 config), max_input은 입력 자르기 기준.
         cache=True + temperature 0이면 같은 입력의 응답을 재사용 (보고서 분석 단계용 —
-        응답을 검증해 버리고 다음 수집 때 재시도하는 수집 단계 호출에는 쓰지 않는다)."""
+        응답을 검증해 버리고 다음 수집 때 재시도하는 수집 단계 호출에는 쓰지 않는다).
+        validate(응답) → 정리된 응답 또는 None(형식 불합격). 불합격이면 재요청 1회, 그래도 불합격이면 None
+        (불합격 응답은 캐시하지 않음 — 호출자가 폴백하고 다음에 다시 시도)."""
         if not self.enabled:
             return None
         chain = self._chain(max_tokens, temperature)
@@ -154,11 +180,18 @@ class LLMSummarizer:
         cached = self._cache_get(key) if key else None
         if cached is not None:
             return cached
-        try:
-            result = chain.invoke({"system": system_prompt, "text": text}).strip()
-        except Exception as error:
-            print(f"Warning: LLM call failed, falling back: {error}")
-            return None
+        result = None
+        for attempt, system in enumerate((system_prompt, system_prompt + RETRY_NOTE)):
+            try:
+                raw = chain.invoke({"system": system, "text": text}).strip()
+            except Exception as error:
+                print(f"Warning: LLM call failed, falling back: {error}")
+                return None
+            result = raw if validate is None else validate(raw)
+            if validate is None or result:
+                break
+            print(f"Warning: LLM output rejected by format check{', retrying' if not attempt else ''}: "
+                  f"{(raw or '')[:80]!r}")
         if key and result:
             self._cache_put(key, result)
         return result
@@ -219,4 +252,4 @@ class LLMSummarizer:
         # 글자 수 대신 의미가 전달되게 요청 — 응답 상한은 잘리지 않을 만큼 넉넉히
         max_tokens = max(int(self.config.get("max_tokens") or 150), 1500)
         return self.complete(f"{system} 글자 수에 얽매이지 말고, 핵심만 간결하게 하되 의미가 끊기지 않게 써줘.",
-                             text, max_tokens=max_tokens)
+                             text, max_tokens=max_tokens, validate=check_summary)

@@ -404,12 +404,12 @@ class ReportGenerator:
         if not digest:
             return []
         try:
-            from weekly_report.ai.llm_summarizer import LLMSummarizer
+            from weekly_report.ai.llm_summarizer import LLMSummarizer, check_summary
             result = LLMSummarizer(
                 paths.LITELLM_CONFIG
             ).complete(
                 self.WEEK_SUMMARY_PROMPT, digest,
-                max_tokens=1500, max_input=12000, temperature=0, cache=True,
+                max_tokens=1500, max_input=12000, temperature=0, cache=True, validate=check_summary,
             )
         except Exception as e:
             print(f"Warning: weekly summary failed: {e}")

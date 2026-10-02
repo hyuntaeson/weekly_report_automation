@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
 from weekly_report import paths
-from weekly_report.ai.rag import TopicQueryRAG, evidence_label
+from weekly_report.ai.rag import TopicQueryRAG, _cosine, check_citations, evidence_label
 from weekly_report.common.timeutil import to_local_datetime
 from weekly_report.report.sections import clean_text, condense
 from weekly_report.storage.database import ActivityDatabase
@@ -57,12 +57,52 @@ QA_PROMPT = (
     "<past>에 이번 주 보고와 같은 주제의 과거 발언이 있으면 "
     "질문 1~2개는 그 발언과 연결해서 묻고 질문 끝에 [P2]처럼 그 번호를 단다 (주제가 다르면 연결하지 않는다).\n"
     "- <asked>는 상사가 이번 주에 이미 한 질문이다. 같은 질문을 반복하지 말고, 필요하면 그 결과나 후속 조치를 묻는다.\n"
-    "- 답변은 보고체로 1~2문장, 간결하게(예: '~완료, ~예정'). <evidence>의 이번 주 근거만 사용하고 끝에 근거 번호를 "
-    "[1][3]처럼 단다. <past>는 상사의 과거 발언일 뿐 사실 근거가 아니므로 답변에 쓰지 않는다.\n"
-    "- 근거로 확인되지 않는 사실(원인·일정·수치 등)은 지어내지 말고 '확인 필요'라고 쓴다.\n"
-    "- 출력 형식은 질문마다 정확히 두 줄:\nQ: 질문 [P번호(있을 때만)]\nA: 답변 [번호]\n"
+    "- 답변은 보고체로 1~2문장. 반드시 이 순서로 쓴다:\n"
+    "  ① <evidence>·<report>로 알 수 있는 현재 상태를 먼저 구체적으로 쓴다 (무엇을 어디까지 했는지, 수치·일정 포함).\n"
+    "  ② 질문이 묻는 것 중 자료로 확인되지 않는 부분(원인·일정·결과 등)만 '~는 확인 필요'로 덧붙인다. "
+    "지어내지 않는다. '확인 필요'만 단독으로 쓰지 않는다 — 자료에 관련 내용이 조금이라도 있으면 그것부터 답한다.\n"
+    "  ③ 끝에 출처: <evidence>에 실제로 적힌 사실이면 [1][3]처럼 그 번호, <evidence>에는 없고 <report>에만 있으면 (보고 내용).\n"
+    "  예) A: 프로그램 개발은 완료됐고 테스트 장비는 9월 초 제공 예정으로 문서에 반영돼 있습니다. 실제 장비 수령·테스트 착수 여부는 확인 필요합니다. [2]\n"
+    "- <past>는 상사의 과거 발언일 뿐 사실 근거가 아니므로 답변에 쓰지 않는다.\n"
+    "- 출력 형식은 질문마다 정확히 두 줄:\nQ: 질문 [P번호(있을 때만)]\nA: 답변 [번호] 또는 (보고 내용)\n"
     "- 그 외 서론·설명은 쓰지 마."
 )
+
+
+FACT_CHECK_PROMPT = (
+    "번호마다 '답변'을 바로 아래 '근거' 원문과 대조해. 답변이 말한 사실(용도·대상·숫자·일정·상태)이 "
+    "근거와 맞으면 OK, 근거와 다르거나 근거를 왜곡했으면 DIFF, 답변의 핵심 사실이 근거에 아예 없으면 NONE. "
+    "'확인 필요'라고 남겨 둔 부분은 판정 대상이 아니다. "
+    "번호마다 한 줄씩 '1: OK' 형식으로만 답해."
+)
+DIFF_MARK = "(근거와 다름, 확인 필요)"
+
+
+def fact_check_answers(answers, evidence_texts, complete):
+    """LLM-as-judge 사실 대조: 근거 번호가 붙은 답변을 인용 근거 원문과 비교해 표시만 단다 (내용은 고치지 않음).
+    answers: [(답변, [근거 번호])], evidence_texts: {번호: 원문}, complete(system, body) → 응답.
+    반환: 답변 목록 — 근거와 다르면 '(근거와 다름, 확인 필요)', 근거에 없으면 '(확인 필요)'. 판정 실패 시 그대로."""
+    targets = [(i, a, refs) for i, (a, refs) in enumerate(answers) if refs]
+    if not targets:
+        return [a for a, _ in answers]
+    strip_refs = lambda text: re.sub(r"\s*\[\d+\]", "", text)
+    body = "\n\n".join(
+        f"{k}. 답변: {strip_refs(a)}\n   근거:\n"
+        + "\n".join(f"   [{n}] {clean_text(evidence_texts.get(n), 1500)}" for n in refs)
+        for k, (_, a, refs) in enumerate(targets, start=1))
+    try:
+        output = complete(FACT_CHECK_PROMPT, body) or ""
+    except Exception as error:
+        print(f"Warning: answer fact check skipped: {error}")
+        output = ""
+    verdict = {int(k): v.upper() for k, v in re.findall(r"(\d+)\s*[:：.]\s*(OK|DIFF|NONE)", output, re.I)}
+    result = [a for a, _ in answers]
+    for k, (i, a, _) in enumerate(targets, start=1):
+        if verdict.get(k) == "DIFF":
+            result[i] = f"{a} {DIFF_MARK}"
+        elif verdict.get(k) == "NONE" and "확인 필요" not in a:
+            result[i] = f"{a} (확인 필요)"
+    return result
 
 
 LINK_JUDGE_PROMPT = (
@@ -109,11 +149,45 @@ def _take_refs(text, pattern, count):
     return re.sub(r"\s{2,}", " ", re.sub(pattern, "", text)).strip(), sorted(refs)
 
 
+def is_bare_answer(answer):
+    """'확인 필요'·출처 표시만 있고 실제 내용이 없는 답변인지"""
+    core = re.sub(r"\[\d+\]|\(보고 내용\)|\(근거와 다름, 확인 필요\)|확인\s*필요(합니다|함)?|[\s.。,]", "", answer or "")
+    return len(core) < 4
+
+
+def fill_bare_answers(questions, answers, points, point_vectors, embed):
+    """'확인 필요'만 남은 답변 → 질문과 가장 가까운 보고 내용으로 채운다 (하네스 폴백).
+    '확인 필요.'만으로는 보고자가 무엇을 알고 있는지조차 안 보여서, 보고 기준 현재 상태를 함께 적는다."""
+    bare = [i for i, a in enumerate(answers) if is_bare_answer(a)]
+    if not bare or not points or not point_vectors:
+        return answers
+    try:
+        vectors = embed([questions[i] for i in bare]) or []
+    except Exception as error:
+        print(f"Warning: bare answer fallback skipped: {error}")
+        vectors = []
+    filled = list(answers)
+    for i, vector in zip(bare, vectors):
+        best = max(range(len(points)), key=lambda k: _cosine(vector, point_vectors[k]))
+        filled[i] = f"보고 기준: {points[best]} — 질문하신 부분은 확인 필요합니다. (보고 내용)"
+    return filled
+
+
+def mark_unsupported(answer):
+    """근거 번호가 없는 답변 — '확인 필요'·'(보고 내용)' 표시가 없으면 '(확인 필요)'를 붙인다.
+    '확인 필요'인 답에 붙은 '(보고 내용)'은 뜻이 없어 지운다 ('확인 필요 (보고 내용)' → '확인 필요')."""
+    if "확인 필요" in answer:
+        return re.sub(r"\s*\(보고 내용\)", "", answer).strip()
+    if "보고 내용" in answer:
+        return answer
+    return answer + " (확인 필요)"
+
+
 def parse_qa(text, evidence_count, past_count=0, limit=QUESTION_COUNT):
     """LLM 출력 → [(질문, 답변, [근거 번호], [과거 대화 번호])]. 하네스 검증:
     - Q 다음에 A가 없는 질문은 버림
     - 없는 번호는 지움. 과거 대화 [P#]는 질문에만 — 답변의 사실 근거로 쓰지 못하게 답변에서는 삭제
-    - 인용도 '확인 필요'도 없는 답변 → '(확인 필요)'를 붙여 근거 없음을 드러냄"""
+    - 인용도 '확인 필요'도 '(보고 내용)'도 없는 답변 → '(확인 필요)'를 붙여 근거 없음을 드러냄"""
     pairs, question, past = [], None, []
     for line in (text or "").splitlines():
         line = line.strip().lstrip("-•* ").strip()
@@ -128,8 +202,8 @@ def parse_qa(text, evidence_count, past_count=0, limit=QUESTION_COUNT):
             answer, refs = _take_refs(answer, r"\[(\d+)\]", evidence_count)
             if refs:
                 answer += " " + "".join(f"[{n}]" for n in refs)
-            elif "확인 필요" not in answer:
-                answer += " (확인 필요)"
+            else:
+                answer = mark_unsupported(answer)
             pairs.append((question, answer, refs, past))
             question, past = None, []
         if len(pairs) >= limit:
@@ -288,7 +362,7 @@ class ExpectedQuestions:
                 if k in seen or not when:
                     continue
                 seen.add(k)
-                evidence.append({"label": evidence_label(a, when),
+                evidence.append({"label": evidence_label(a, when), "activity": a,
                                  "text": clean_text(self.rag.clusterer._activity_text(a), 300)})
         # 상사의 과거 발언 = 질문의 맥락 [P#] (사실 근거 아님)
         past_lines = []
@@ -317,6 +391,21 @@ class ExpectedQuestions:
         if not pairs:
             return None
         pairs = self._verify_past_links(pairs, past)
+        # 답변 내용과 무관한 근거 번호는 지우고, 남은 근거가 없으면 '(확인 필요)' 표시 (rag와 같은 하네스)
+        checked = check_citations([(a, refs) for _, a, refs, _ in pairs],
+                                  self.rag.evidence_vectors(evidence), self.rag.clusterer.embed,
+                                  evidence_texts=self.rag.evidence_texts(evidence))
+        pairs = [(q, a2 if refs2 else mark_unsupported(a2), refs2, prefs)
+                 for (q, _, _, prefs), (a2, refs2) in zip(pairs, checked)]
+        # 근거 문서는 맞는데 그 안의 사실을 틀리게 말한 답변(예: '정산용' 구분자를 '운임 계산용'으로) — 표시만
+        answers = fact_check_answers(
+            [(a, refs) for _, a, refs, _ in pairs], self.rag.evidence_texts(evidence),
+            lambda system, body: self.rag.llm.complete(system, body, max_tokens=300, max_input=12000,
+                                                       temperature=0, cache=True))
+        answers = fill_bare_answers([q for q, _, _, _ in pairs], answers, points, point_vectors,
+                                    self.rag.clusterer.embed)
+        pairs = [(q, a2, refs if not is_bare_answer(a) else [], prefs)
+                 for (q, a, refs, prefs), a2 in zip(pairs, answers)]
 
         # 인용된 근거만 1부터 다시 번호 매김 (같은 출처는 한 번호로) — rag와 같은 방식
         cited = sorted({n for _, _, refs, _ in pairs for n in refs})
