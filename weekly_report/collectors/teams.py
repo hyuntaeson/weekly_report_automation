@@ -403,6 +403,12 @@ class TeamsCollector:
             datetime.now(timezone.utc) - timedelta(days=days)
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+        activities = self._collect_chat_messages(access_token, since, allowed_types, excluded_ids, me_name)
+        activities.extend(self.collect_calendar_events(days))
+        return activities
+
+    def _collect_chat_messages(self, access_token, since, allowed_types, excluded_ids, me_name):
+        """since(UTC ISO) 이후 메시지 — allowed_types 채팅방만, 제외 채팅방은 건너뜀"""
         activities = []
         try:
             # 채팅 목록 자체도 최근 활동순 — lastMessagePreview 기준으로
@@ -415,7 +421,7 @@ class TeamsCollector:
             )
         except Exception as e:
             print(f"Error listing Teams chats: {e}")
-            return []
+            return activities
 
         for chat in chats:
             if chat.get("chatType") not in allowed_types:
@@ -444,11 +450,27 @@ class TeamsCollector:
                 created = msg.get("createdDateTime", "")
                 if created < since:
                     continue
-                activity = self._message_to_activity(msg, title, me_name, chat_id)
+                activity = self._message_to_activity(msg, title, me_name, chat_id, chat.get("chatType"))
                 if activity:
                     activities.append(activity)
 
-        activities.extend(self.collect_calendar_events(days))
+        return activities
+
+    def collect_direct_messages(self, since, until=None):
+        """1:1 채팅 메시지만 since~until(로컬 datetime) — 일일 할 일 추출 전용, DB에 저장하지 않는다.
+        Settings의 채팅 유형은 주간보고용이라 1:1을 빼 두어도, 나에게 직접 온 요청은 할 일에서 놓치지 않도록
+        여기서 따로 읽는다 (사용자 결정 B). 제외 채팅방 설정은 그대로 적용."""
+        access_token = self._token or get_access_token(self.token_file)
+        if not access_token:
+            return []
+        self._token = access_token
+        settings = load_teams_settings()
+        excluded_ids = {c.get("id") for c in settings.get("excluded_chats", [])}
+        me_name = self._me_display_name(access_token)
+        to_utc = lambda dt: dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        activities = self._collect_chat_messages(access_token, to_utc(since), {"oneOnOne"}, excluded_ids, me_name)
+        if until is not None:
+            activities = [a for a in activities if a["timestamp"] < to_utc(until)]
         return activities
 
     def list_chats(self, days=None):
@@ -593,8 +615,27 @@ class TeamsCollector:
             )
         return activities
 
-    def _message_to_activity(self, msg, chat_title, me_name=None, chat_id=None):
-        """Graph message 객체를 activities 테이블 포맷으로 변환"""
+    @staticmethod
+    def mentions_all(msg):
+        """'@모든 사용자'(채팅방 전체) 언급 — 나도 포함되지만 직접 언급보다 우선순위 낮음"""
+        return any(not ((m.get("mentioned") or {}).get("user") or {}).get("displayName")
+                   and (m.get("mentionText") or "") in ("모든 사용자", "Everyone", "everyone")
+                   for m in msg.get("mentions") or [])
+
+    @staticmethod
+    def mentions_me(msg, me_name):
+        """메시지가 나를 @언급했는지 (Graph mentions의 사용자 표시 이름 비교)"""
+        if not me_name:
+            return False
+        for mention in msg.get("mentions") or []:
+            user = ((mention.get("mentioned") or {}).get("user") or {})
+            if user.get("displayName") == me_name:
+                return True
+        return False
+
+    def _message_to_activity(self, msg, chat_title, me_name=None, chat_id=None, chat_type=None):
+        """Graph message 객체를 activities 테이블 포맷으로 변환.
+        chat_type(oneOnOne/group/meeting)·mentions_me는 '나에게 온 요청'을 가리는 데 쓴다 (일일 할 일)."""
         sender = ((msg.get("from") or {}).get("user") or {}).get("displayName") or "Unknown"
         body_html = (msg.get("body") or {}).get("content") or ""
         text = re.sub(r"<[^>]+>", " ", body_html)
@@ -617,6 +658,9 @@ class TeamsCollector:
                     "message_type": msg.get("messageType"),
                     # 주간보고서에서 '내가 보낸 메시지'만 골라 요약할 때 사용
                     "from_me": bool(me_name and sender == me_name),
+                    "chat_type": chat_type,
+                    "mentions_me": self.mentions_me(msg, me_name),
+                    "mentions_all": self.mentions_all(msg),
                 },
                 ensure_ascii=False,
             ),

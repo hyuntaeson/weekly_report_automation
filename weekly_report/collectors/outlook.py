@@ -7,6 +7,7 @@ Collects email and calendar activity from Microsoft Outlook
 import os
 
 from weekly_report import paths
+from weekly_report.report.sections import clean_text
 
 try:
     import win32com.client
@@ -16,9 +17,14 @@ except ImportError:
     win32com = None
     _WIN32COM_AVAILABLE = False
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from weekly_report.storage.database import ActivityDatabase
 from weekly_report.ai.llm_summarizer import LLMSummarizer
+
+
+# 참조(CC)로만 받은 메일의 본문 앞부분 (LLM 요약 대신)
+RECEIVED_PREVIEW_LEN = 300
 
 
 class OutlookCollector:
@@ -74,8 +80,16 @@ class OutlookCollector:
         url = (
             "https://graph.microsoft.com/v1.0/me/mailFolders/"
             f"{folder}/messages?$select=subject,{recipient_field},receivedDateTime,"
-            f"sentDateTime,bodyPreview&$top=50&$orderby=receivedDateTime desc"
+            f"sentDateTime,bodyPreview,toRecipients,ccRecipients&$top=50&$orderby=receivedDateTime desc"
         )
+        my_address = ""
+        if action == "email_received":
+            try:
+                me = http.get("https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+                              headers=headers, timeout=15).json()
+                my_address = (me.get("mail") or me.get("userPrincipalName") or "").lower()
+            except Exception as e:
+                print(f"Warning: Graph /me lookup failed: {e}")
         try:
             items = http.get(url, headers=headers, timeout=15).json().get(
                 "value", []
@@ -90,6 +104,10 @@ class OutlookCollector:
             if sent and sent < since:
                 continue
             recipients = msg.get(recipient_field) or []
+            addresses = lambda key: {((r.get("emailAddress") or {}).get("address") or "").lower()
+                                     for r in msg.get(key) or []}
+            recipient_type = ("to" if my_address in addresses("toRecipients") else
+                              "cc" if my_address in addresses("ccRecipients") else "other")
             activity = {
                 'timestamp': sent or msg.get("receivedDateTime"),
                 'action': action,
@@ -104,57 +122,113 @@ class OutlookCollector:
                     ),
                 },
             }
+            if action == "email_received":
+                sender = (msg.get("from") or {}).get("emailAddress") or {}
+                activity['details'].update({'sender': sender.get('address') or '',
+                                            'sender_name': sender.get('name') or '',
+                                            'recipient_type': recipient_type})
             activities.append(activity)
         return activities
     
     def collect_email_activity(self, days=7):
         """Collect email activity from the last N days.
+        받은 메일마다 내 위치(수신 to / 참조 cc / 그 외)를 남기고, 수신 메일은 본문을 LLM 요약(캐시),
+        참조 메일은 앞부분만 — 일일 할 일에서 '나에게 온 요청'을 가리는 재료.
         COM 연결 실패 시(미실행/비Windows) Graph 경로로 폴백."""
         if not self.connect_outlook():
             return self._collect_mail_via_graph(
                 days, "Inbox", "email_received", "Email",
                 "sender", "from"
             )
-        
+
         activities = []
-        
+        bodies = []  # (activity, 본문) — COM 객체는 스레드에 못 넘기므로 본문만 먼저 꺼낸 뒤 요약은 병렬로
         try:
-            # Get Inbox
             namespace = self.outlook.GetNamespace("MAPI")
             inbox = namespace.GetDefaultFolder(6)  # 6 = Inbox
-            
-            # Get emails from last N days
+            me = self._my_identities(namespace)
             start_date = datetime.now() - timedelta(days=days)
             items = inbox.Items
             items.Sort("[ReceivedTime]", True)
-            
-            # Filter by date
             items = items.Restrict(f"[ReceivedTime] >= '{start_date.strftime('%m/%d/%Y %H:%M %p')}'")
-            
+            summary_cache = self._get_summary_cache()
+
             for item in items:
                 try:
+                    timestamp = item.ReceivedTime.isoformat() if hasattr(item.ReceivedTime, 'isoformat') else str(item.ReceivedTime)
+                    file_path = f"Email: {item.Subject}"
+                    recipient_type = self._recipient_type(item, me)
                     activity = {
-                        'timestamp': item.ReceivedTime.isoformat() if hasattr(item.ReceivedTime, 'isoformat') else str(item.ReceivedTime),
+                        'timestamp': timestamp,
                         'action': 'email_received',
-                        'file_path': f"Email: {item.Subject}",
+                        'file_path': file_path,
                         'file_type': 'email',
                         'source': 'outlook',
                         'details': {
                             'subject': item.Subject,
                             'sender': item.SenderEmailAddress if hasattr(item, 'SenderEmailAddress') else 'Unknown',
-                            'size': item.Size if hasattr(item, 'Size') else 0
-                        }
+                            'sender_name': getattr(item, 'SenderName', '') or '',
+                            # to: 나를 수신으로 지정, cc: 참조만, other: 그룹 주소·숨은 참조 등
+                            'recipient_type': recipient_type,
+                            'size': item.Size if hasattr(item, 'Size') else 0,
+                        },
                     }
+                    body = ' '.join(str(getattr(item, 'Body', '') or '').split())
+                    cached = summary_cache.get((timestamp, 'email_received', file_path))
+                    if cached:
+                        activity['details']['summary'] = cached
+                    elif recipient_type == 'to':
+                        bodies.append((activity, body))
+                    else:
+                        # 참조로만 받은 메일은 할 일이 되는 경우가 드물어 LLM 요약 대신 앞부분만
+                        activity['details']['preview'] = clean_text(body, RECEIVED_PREVIEW_LEN)
                     activities.append(activity)
                 except Exception as e:
                     print(f"Error processing email: {e}")
                     continue
-        
         except Exception as e:
             print(f"Error collecting email activity: {e}")
-        
+
+        if bodies:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                summaries = list(pool.map(lambda pair: self._summarize_text(pair[1]), bodies))
+            for (activity, _), summary in zip(bodies, summaries):
+                activity['details']['summary'] = summary
         return activities
-    
+
+    @staticmethod
+    def _my_identities(namespace):
+        """내 계정을 가리키는 이름·주소 (소문자) — 받은 메일 수신자 목록에서 나를 찾는 데 사용"""
+        names = set()
+        try:
+            user = namespace.CurrentUser
+            names.update({str(user.Name or '').lower(), str(user.Address or '').lower()})
+            exchange = user.AddressEntry.GetExchangeUser()
+            if exchange is not None:
+                names.add(str(exchange.PrimarySmtpAddress or '').lower())
+        except Exception as e:
+            print(f"Warning: Outlook current user lookup failed: {e}")
+        return {n for n in names if n}
+
+    @staticmethod
+    def _recipient_type(item, me):
+        """받은 메일에서 내 위치: 'to'(수신) / 'cc'(참조) / 'other'(그룹 주소·숨은 참조 등)"""
+        found = set()
+        try:
+            for recipient in item.Recipients:
+                ids = {str(recipient.Name or '').lower(), str(recipient.Address or '').lower()}
+                try:
+                    exchange = recipient.AddressEntry.GetExchangeUser()
+                    if exchange is not None:
+                        ids.add(str(exchange.PrimarySmtpAddress or '').lower())
+                except Exception:
+                    pass
+                if ids & me:
+                    found.add(recipient.Type)  # 1=To, 2=CC, 3=BCC
+        except Exception:
+            return 'other'
+        return 'to' if 1 in found else 'cc' if 2 in found else 'other'
+
     def collect_sent_email_activity(self, days=7):
         """Collect sent email activity from the last N days.
         COM 연결 실패 시(미실행/비Windows) Graph 경로로 폴백."""

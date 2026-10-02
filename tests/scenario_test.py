@@ -486,6 +486,49 @@ def t_project_docs():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_mail_teams_fields():
+    """일일 할 일 재료: Teams @언급(나·모든 사용자) 판정, 받은 메일 수신/참조 판정"""
+    from types import SimpleNamespace
+    from weekly_report.collectors.teams import TeamsCollector
+    from weekly_report.collectors.outlook import OutlookCollector
+    me = "손현태(이마트24 POS서버) - IT개발혁신TF"
+    msg = {"mentions": [{"mentionText": me, "mentioned": {"user": {"displayName": me}}},
+                        {"mentionText": "모든 사용자", "mentioned": {"conversation": {}}}]}
+    other = {"mentions": [{"mentionText": "남궁윤", "mentioned": {"user": {"displayName": "남궁윤(이마트24POS) - 이마트24POS팀"}}}]}
+    if not (TeamsCollector.mentions_me(msg, me) and TeamsCollector.mentions_all(msg)
+            and not TeamsCollector.mentions_me(other, me) and not TeamsCollector.mentions_all(other)):
+        return fail("Teams 언급 판정 오류")
+
+    class Entry:
+        def __init__(self, smtp):
+            self.smtp = smtp
+        def GetExchangeUser(self):
+            return SimpleNamespace(PrimarySmtpAddress=self.smtp)
+    def recip(name, smtp, kind):
+        return SimpleNamespace(Name=name, Address="/o=ExchangeLabs/cn=x", Type=kind, AddressEntry=Entry(smtp))
+    mine = {"191648@shinsegae.com", "손현태(이마트24 pos서버) - it개발혁신tf"}
+    to_mail = SimpleNamespace(Recipients=[recip("김영호", "kim@x.com", 1), recip("손현태", "191648@shinsegae.com", 1)])
+    cc_mail = SimpleNamespace(Recipients=[recip("김영호", "kim@x.com", 1), recip("손현태", "191648@shinsegae.com", 2)])
+    dl_mail = SimpleNamespace(Recipients=[recip("운영서비스팀 전체", "ops@x.com", 1)])
+    got = [OutlookCollector._recipient_type(m, mine) for m in (to_mail, cc_mail, dl_mail)]
+    if got != ["to", "cc", "other"]:
+        return fail(f"메일 수신 위치 판정 오류: {got}")
+    # 1:1 전용 수집(할 일 추출용, DB 미저장): 1:1 채팅방만, until 이후 메시지는 제외
+    from datetime import datetime as _dt, timezone as _tz
+    import weekly_report.collectors.teams as teams_mod
+    tc = TeamsCollector.__new__(TeamsCollector)
+    tc._token, tc.token_file, tc._me_name = "x", None, me
+    seen = {}
+    def fake(token, since, types, excluded, me_name):
+        seen["types"] = types
+        return [{"timestamp": "2026-10-01T23:30:00Z"}, {"timestamp": "2026-10-02T01:00:00Z"}]
+    tc._collect_chat_messages = fake
+    got = tc.collect_direct_messages(_dt(2026, 10, 1, 0, 0, tzinfo=_tz.utc), until=_dt(2026, 10, 2, 0, 0, tzinfo=_tz.utc))
+    if seen.get("types") != {"oneOnOne"} or [a["timestamp"] for a in got] != ["2026-10-01T23:30:00Z"]:
+        return fail(f"1:1 전용 수집 오류: {seen} / {got}")
+    return ok("Teams @나·@모든 사용자 판정, 받은 메일 수신(To)·참조(CC)·그룹 주소 판정, 1:1 전용 수집(기간·채팅 유형)")
+
+
 def t_storage_retention():
     """저장소 보관 정책: 보관 기간이 지난 주는 요약 벡터 저장 후 활동 벡터 삭제, 요약 실패 주는 보류,
     최근 주는 유지, 레거시 임베딩 테이블 삭제, 장기 질의(요약 → 원본 활동) (임시 폴더·DB, 4차원)"""
@@ -950,6 +993,7 @@ def t_llm_output_check():
         "요약하려면 원문을 공유해 주시겠어요?": None,
         "다음은 메일 요약입니다:\n10월2차 배포 일정 공유": "10월2차 배포 일정 공유",
         "요약: 직영 20개점 점검 완료": "직영 20개점 점검 완료",
+        "**요약:**\nIT개발혁신 TF 5단계 워크플로우 공유": "IT개발혁신 TF 5단계 워크플로우 공유",
         "DB 복구가 실패해 원인은 확인할 수 없는 상태이며 하드 교체를 검토 중": "DB 복구가 실패해 원인은 확인할 수 없는 상태이며 하드 교체를 검토 중",
     }
     wrong = {k: check_summary(k) for k, v in cases.items() if check_summary(k) != v}
@@ -1186,6 +1230,7 @@ TESTS = [
     ("COL-12", "수집", "SharePoint/OneDrive 수집(라이브)", t_sharepoint),
     ("COL-13", "수집", "Office COM 읽기 + 버전 diff", t_office_com_diff),
     ("COL-14", "수집", "프로젝트 문서·지난 보고 (근거 전용)", t_project_docs),
+    ("COL-15", "수집", "메일 수신/참조·Teams 언급 (일일 할 일 재료)", t_mail_teams_fields),
 
     ("PROC-01", "데이터 가공", "회의 중복 제거(teams 우선)", t_meeting_dedupe),
     ("PROC-02", "데이터 가공", "일시 파일(created+deleted) 제거", t_transient_files),
