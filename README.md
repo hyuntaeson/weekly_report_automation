@@ -51,7 +51,8 @@
 - [x] STEP 2 주요 이슈 & 리스크 표 + 다음 주 계획 (근거 인용·상태는 기록 기준·지난 일정 제외)
 - [x] 메인 화면 정리 — Active Work Sessions 6×2, 보고서 생성 패널, 창을 작업 영역 안에 맞춤
 - [x] 나만의 비서 — 메인 카드 09:00 오늘 할 일(전 근무일 메일·Teams·1:1·일정·이월) / 17:00 진행 점검·이월 (지금은 버튼 실행)
-- [ ] 나만의 비서 자동 실행(09:00·17:00)·알림
+- [x] 나만의 비서 자동 실행(근무일 09:00·17:00, 놓치면 켤 때) + Settings 공휴일 입력
+- [ ] 나만의 비서 알림 채널 (md / 메일 / Teams 나에게)
 - [x] 보고서 생성 속도 개선(분석 병렬화·LLM 캐시·10분 내 재수집 생략) + 메인 화면 생성 상태 표시(요청 시각·진행 단계·폴더 바로가기)
 - [x] 저장소 보관 정책 — Settings에서 활동 벡터 보관 기간(8~104주) 선택, 지난 주는 주간 요약 벡터로 영구 보관, 현재 사용량·예상 속도 표시
 - [x] macOS 이식 준비 — win32 가드, Outlook은 Graph 폴백으로 플랫폼 무관 수집
@@ -149,11 +150,12 @@ weekly_report_automation/
 │       ├── teams_settings.py     # Settings > Teams 수집·보고 설정
 │       ├── report_settings.py    # Settings > 보고서 설정 (RAG 주제 질의·근거 제외 키워드)
 │       ├── storage_settings.py   # Settings > 저장소 관리 (보관 기간·사용량)
-│       ├── todo_card.py          # 메인 '오늘 할 일' 카드 (09:00/17:00)
+│       ├── todo_card.py          # 메인 '오늘 할 일' 카드 (09:00/17:00 자동 실행)
+│       ├── assistant_settings.py # Settings > 나만의 비서 (자동 실행·공휴일)
 │       ├── actions.py            # 추적·수집·보고서 생성 동작
 │       └── widgets.py            # 공용 컨트롤
 ├── tests/
-│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (60건 → test_reports/*.xlsx)
+│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (62건 → test_reports/*.xlsx)
 │   ├── eval_step3.py             # STEP 3 정답셋 회귀 평가 (→ test_reports/eval_step3_*.md)
 │   └── legacy/                   # 구버전 테스트 (test_all_completed 등)
 ├── scripts/
