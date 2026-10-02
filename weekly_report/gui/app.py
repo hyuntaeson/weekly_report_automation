@@ -13,6 +13,7 @@ WeeklyPulse GUI (Flet) — 앱 뼈대: 창 설정, 사이드바 내비게이션,
   widgets.py          공용 컨트롤
 """
 
+import os
 import threading
 
 import flet as ft
@@ -30,6 +31,23 @@ from weekly_report.gui.watch_settings import WatchSettingsMixin
 # 최초 렌더링 경로에서는 빼둔다.
 
 
+def work_area():
+    """작업표시줄을 뺀 화면 영역 (left, top, width, height) — 논리 픽셀(화면 배율 반영). Windows 외에는 None"""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return None
+        scale = ctypes.windll.user32.GetDpiForSystem() / 96 or 1
+        return (rect.left / scale, rect.top / scale,
+                (rect.right - rect.left) / scale, (rect.bottom - rect.top) / scale)
+    except Exception:
+        return None
+
+
 class WeeklyPulseApp(DashboardMixin, WatchSettingsMixin, TeamsSettingsMixin,
                      ReportSettingsMixin, StorageSettingsMixin, ActionsMixin):
     """Modern WeeklyPulse-style application with proper sizing"""
@@ -38,10 +56,7 @@ class WeeklyPulseApp(DashboardMixin, WatchSettingsMixin, TeamsSettingsMixin,
         self.page = page
         self.page.title = "WeeklyPulse"
         self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.page.window.width = 1400
-        self.page.window.height = 780
-        self.page.window.min_width = 1200
-        self.page.window.min_height = 650
+        self._fit_window_to_work_area(width=1400, height=780, min_width=1200, min_height=650)
         self.page.padding = 0
         self.page.bgcolor = ft.Colors.WHITE
 
@@ -71,14 +86,6 @@ class WeeklyPulseApp(DashboardMixin, WatchSettingsMixin, TeamsSettingsMixin,
         for app_name, app_data in self.tracked_apps.items():
             app_data["active"] = app_name in running
 
-        # Statistics - 실제 수집 데이터 기반으로 compute_weekly_stats()가 채움
-        self.total_hours = "0 hrs"
-        self.active_tools = 0
-        self.most_used = "-"
-        self.stat_value_refs = {}
-        self._stats_last_computed = 0.0
-        self.compute_weekly_stats()
-
         # UI references
         self.tracking_button_ref = None
         self.nav_items = {}
@@ -87,6 +94,21 @@ class WeeklyPulseApp(DashboardMixin, WatchSettingsMixin, TeamsSettingsMixin,
         self.main_content_column = None
         self.watch_folder_list_ref = None
         self.watch_config_path = paths.WATCH_CONFIG
+
+    def _fit_window_to_work_area(self, width, height, min_width, min_height):
+        """창을 작업표시줄을 뺀 화면 영역(작업 영역) 안에 맞춘다 — 기본 크기가 들어가면 그대로,
+        안 들어가면 줄이고 위쪽에 붙인다. 넘치는 내용은 본문 스크롤로 본다.
+        (예전엔 고정 1400×780이라 화면 배율 125% 노트북에서 작업표시줄을 덮었음)"""
+        window = self.page.window
+        area = work_area()
+        if area:
+            left, top, area_width, area_height = area
+            width, height = min(width, area_width), min(height, area_height)
+            min_width, min_height = min(min_width, width), min(min_height, height)
+            window.left = left + (area_width - width) / 2
+            window.top = top + max(0, (area_height - height) / 2)
+        window.width, window.height = width, height
+        window.min_width, window.min_height = min_width, min_height
 
     def build_ui(self):
         """Build the modern UI with proper sizing.

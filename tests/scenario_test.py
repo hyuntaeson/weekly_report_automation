@@ -1143,7 +1143,7 @@ def t_report_status_panel():
     app = WeeklyPulseApp.__new__(WeeklyPulseApp)
     app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None)
     app.show_snack = lambda msg: None
-    app.total_hours, app.active_tools, app.most_used, app.stat_value_refs = "0 hrs", 0, "-", {}
+
     app.create_control_panel()
     button = app.generate_button
     if app.report_status_text.value != "생성대기" or app.report_folder_button.visible:
