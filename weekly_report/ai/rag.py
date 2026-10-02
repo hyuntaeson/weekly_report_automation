@@ -32,6 +32,9 @@ DEFAULT_SETTINGS = {
     # 근거 제외 키워드 — 파일 경로·제목·내용에 들어 있으면 RAG·STEP 3 근거로 쓰지 않음
     # (이 프로그램 테스트 메모·이전 보고서 복사본이 원본 대화 대신 인용되는 것 방지)
     "evidence_exclude_keywords": ["주간보고 자동작성", "weekly_report", "WeeklyPulse"],
+    # 나만의 비서: 근무일 09:00·17:00 자동 실행, 근무일에서 뺄 공휴일·휴무일(YYYY-MM-DD)
+    "todo_auto": True,
+    "holidays": [],
 }
 # 근거에서 통째로 빼는 프로그램 — IDE 기록은 거의 이 프로그램 개발 요청이라 업무 근거가 아님
 # (STEP 1 프로그램별 기록에는 그대로 남는다)

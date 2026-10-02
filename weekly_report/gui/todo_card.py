@@ -5,9 +5,10 @@
 Flet 0.86: Row 자식이 3개 이상이면 마지막이 안 그려질 수 있어 2개씩 중첩(pair).
 """
 
+import asyncio
 import os
 import subprocess
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 import flet as ft
 
@@ -21,6 +22,33 @@ KIND_ICON = {"요청": ft.Icons.MARK_EMAIL_UNREAD_OUTLINED, "내 약속": ft.Ico
 
 
 PRIO_RANK = {"높음": 0, "일정": 2, "보통": 3}
+AUTO_CHECK_MINUTES = 30   # 자동 실행 확인 주기 — 실패하면 다음 확인 때 다시 시도
+CHECK_TIME = time(17, 0)
+
+
+def todo_due_action(now, holidays=(), has_am=False, has_pm=False, auto=True):
+    """지금 자동으로 할 일 — 'am'(오늘 할 일 추출) / 'pm'(진행 점검) / None.
+    근무일에 09:00이 지났는데 아침 추출을 안 했으면 am, 17:00이 지났고 아침 추출은 했는데 점검을 안 했으면 pm.
+    그 시각에 PC가 꺼져 있었어도 프로그램을 켜는 순간 같은 판단으로 놓친 작업을 한다."""
+    from weekly_report.ai.todos import WORK_START, is_workday
+    if not auto or not is_workday(now.date(), holidays):
+        return None
+    if now.time() >= WORK_START and not has_am:
+        return "am"
+    if now.time() >= CHECK_TIME and has_am and not has_pm:
+        return "pm"
+    return None
+
+
+def seconds_until_next_check(now):
+    """다음 확인까지 초 — 30분마다 확인하되 09:00·17:00이 그 사이에 있으면 정각에 깨어남"""
+    from weekly_report.ai.todos import WORK_START
+    wait = timedelta(minutes=AUTO_CHECK_MINUTES)
+    for t in (WORK_START, CHECK_TIME):
+        at = datetime.combine(now.date(), t)
+        if now < at < now + wait:
+            wait = at - now
+    return max(1, int(wait.total_seconds()) + 1)
 
 
 def todo_sort_key(item):
@@ -159,6 +187,38 @@ class TodoCardMixin:
         return ft.Container(ft.Row([left, right], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                             padding=ft.Padding(4, 4, 4, 4), border=ft.Border(bottom=ft.BorderSide(1, C.GREY_200)))
 
+    # ---------- 자동 실행 (5-4) ----------
+
+    def start_todo_scheduler(self):
+        """30분마다(09:00·17:00엔 정각에) todo_due_action 확인 — 켜자마자 한 번 확인하므로 놓친 09:00·17:00도 바로 실행.
+        확인 자체는 DB 조회 2번이고, LLM은 실행할 때만 부른다."""
+        async def loop():
+            while True:
+                try:
+                    self._todo_auto_tick()
+                except Exception as ex:
+                    print(f"Warning: todo auto run check failed: {ex}")
+                await asyncio.sleep(seconds_until_next_check(datetime.now()))
+        self.page.run_task(loop)
+
+    def _todo_auto_tick(self, now=None):
+        from weekly_report.ai.rag import load_report_settings
+        settings = load_report_settings()
+        now = now or datetime.now()
+        key = now.date().isoformat()
+        if getattr(self, "todo_date", None) is None and self._todo_today() != now.date():
+            self.render_todo_card()  # 자정을 넘기면 카드도 새 날짜로
+        action = todo_due_action(now, settings.get("holidays", []), self.todo_store.has_run(key, "am"),
+                                 self.todo_store.has_run(key, "pm"), settings.get("todo_auto", True))
+        if not action or self.todo_busy:
+            return None
+        self.todo_mode = action
+        if action == "am":
+            self.todo_extract(force=False)
+        else:
+            self.todo_check_progress()
+        return action
+
     # ---------- 17:00 진행 점검 ----------
 
     def todo_set_mode(self, mode):
@@ -270,7 +330,7 @@ class TodoCardMixin:
                                 style=ft.ButtonStyle(bgcolor=C.BLUE, color=C.WHITE, shape=ft.RoundedRectangleBorder(radius=8)))
             secondary = ft.TextButton("근거 보기", icon=ft.Icons.FORMAT_LIST_NUMBERED, on_click=self.todo_show_evidence,
                                       disabled=not items)
-            note = "17:00 진행 점검 탭에서 오늘 활동과 대조할 수 있어요"
+            note = "근무일 09:00 자동 추출 · 17:00 자동 점검 (Settings > 나만의 비서)"
         else:
             done = sum(i["status"] == "done" for i in today_items)
             new_items = [i for i in tomorrow_items if i.get("kind") == "새 요청"]

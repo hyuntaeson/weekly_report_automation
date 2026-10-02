@@ -733,6 +733,96 @@ def t_todo_card_pm():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_todo_scheduler():
+    """자동 실행 판단: 근무일 09:00 추출·17:00 점검, 주말·공휴일 건너뜀, 놓친 시각은 켤 때 실행, 30분 확인(정각엔 맞춰 깨어남)"""
+    import shutil, tempfile
+    from datetime import datetime
+    from types import SimpleNamespace
+    from weekly_report.gui.todo_card import seconds_until_next_check, todo_due_action
+    from weekly_report.gui.app import WeeklyPulseApp
+    from weekly_report.storage.todos import TodoStore
+    H = ["2026-10-05"]
+    cases = [
+        (datetime(2026, 10, 2, 8, 59), False, False, True, None),    # 출근 전
+        (datetime(2026, 10, 2, 9, 0), False, False, True, "am"),
+        (datetime(2026, 10, 2, 13, 40), False, False, True, "am"),   # 아침에 PC가 꺼져 있었음 → 켤 때
+        (datetime(2026, 10, 2, 13, 40), True, False, True, None),
+        (datetime(2026, 10, 2, 18, 30), True, False, True, "pm"),    # 17시에 꺼져 있었음 → 켤 때
+        (datetime(2026, 10, 2, 18, 30), False, False, True, "am"),   # 하루 종일 꺼져 있었으면 추출부터
+        (datetime(2026, 10, 2, 18, 30), True, True, True, None),
+        (datetime(2026, 10, 3, 10, 0), False, False, True, None),    # 토요일
+        (datetime(2026, 10, 5, 10, 0), False, False, True, None),    # 대체공휴일
+        (datetime(2026, 10, 6, 10, 0), False, False, False, None),   # 자동 실행 끔
+    ]
+    for now, am, pm, auto, want in cases:
+        got = todo_due_action(now, H, am, pm, auto)
+        if got != want:
+            return fail(f"{now:%m-%d %H:%M} am={am} pm={pm} auto={auto}: {got} (기대 {want})")
+    waits = {datetime(2026, 10, 2, 8, 50): 601, datetime(2026, 10, 2, 9, 0): 1801,
+             datetime(2026, 10, 2, 16, 45): 901, datetime(2026, 10, 2, 11, 0): 1801}
+    for now, want in waits.items():
+        if seconds_until_next_check(now) != want:
+            return fail(f"{now:%H:%M} 다음 확인 {seconds_until_next_check(now)}초 (기대 {want})")
+    tmp = tempfile.mkdtemp(prefix="wr_sched_")
+    try:
+        app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+        app.todo_store, app.todo_busy, app.todo_date = TodoStore(os.path.join(tmp, "t.db")), False, None
+        app._todo_today = lambda: datetime(2026, 10, 2).date()
+        calls = []
+        app.todo_extract = lambda force=False: calls.append(("am", force))
+        app.todo_check_progress = lambda: calls.append(("pm",))
+        app.render_todo_card = lambda: None
+        import weekly_report.ai.rag as rag
+        orig = rag.load_report_settings
+        rag.load_report_settings = lambda: {"holidays": H, "todo_auto": True}
+        try:
+            first = app._todo_auto_tick(datetime(2026, 10, 2, 9, 0))
+            app.todo_store.mark_run("2026-10-02", "am")
+            mid = app._todo_auto_tick(datetime(2026, 10, 2, 12, 0))
+            last = app._todo_auto_tick(datetime(2026, 10, 2, 17, 0))
+            app.todo_busy = True
+            busy = app._todo_auto_tick(datetime(2026, 10, 2, 17, 30))
+        finally:
+            rag.load_report_settings = orig
+        if (first, mid, last, busy) != ("am", None, "pm", None) or calls != [("am", False), ("pm",)] \
+                or app.todo_mode != "pm":
+            return fail(f"자동 실행 호출 오류: {first, mid, last, busy} {calls}")
+        return ok("09:00 추출·17:00 점검, 놓친 시각은 켤 때 실행, 주말·공휴일·끔 건너뜀, "
+                  "30분 확인이되 09:00·17:00엔 정각에, 실행 중이면 겹치지 않음")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_assistant_settings():
+    """Settings > 나만의 비서: 공휴일 추가(형식 검증·중복)·추천 공휴일·삭제, 자동 실행 끄기 저장"""
+    from types import SimpleNamespace
+    from weekly_report.gui.app import WeeklyPulseApp
+    app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+    app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None)
+    snacks, saves = [], []
+    app.show_snack = snacks.append
+    app.report_settings = {"holidays": []}
+    app._save_report_settings = lambda: saves.append(dict(app.report_settings))
+    app._create_assistant_settings_section()
+    for value in ("2026/10/05", "10월 5일", "2026-10-05"):
+        app.holiday_input.value = value
+        app._add_holiday()
+    if app.report_settings["holidays"] != ["2026-10-05"] or "날짜를" not in snacks[1] or "이미" not in snacks[2]:
+        return fail(f"공휴일 추가 오류: {app.report_settings['holidays']} {snacks}")
+    if "2026-10-05 (월) 개천절 대체공휴일" not in str(app.holiday_chips.controls[0].content.controls[0].value):
+        return fail("공휴일 칩 표시 오류")
+    app._add_suggested_holidays()
+    from datetime import date
+    from weekly_report.gui.assistant_settings import SUGGESTED_HOLIDAYS
+    if not {d for d in SUGGESTED_HOLIDAYS if d >= date.today().isoformat()} <= set(app.report_settings["holidays"]):
+        return fail(f"추천 공휴일 오류: {app.report_settings['holidays']}")
+    app._remove_holiday("2026-12-25")
+    app._todo_auto_changed(False)
+    if "2026-12-25" in app.report_settings["holidays"] or saves[-1].get("todo_auto") is not False:
+        return fail("삭제·자동 실행 끄기 저장 오류")
+    return ok("공휴일 추가(2026/10/05 형식 허용, 잘못된 형식·중복 안내)·요일 표시·추천 공휴일·삭제, 자동 실행 끄기 저장")
+
+
 def t_storage_retention():
     """저장소 보관 정책: 보관 기간이 지난 주는 요약 벡터 저장 후 활동 벡터 삭제, 요약 실패 주는 보류,
     최근 주는 유지, 레거시 임베딩 테이블 삭제, 장기 질의(요약 → 원본 활동) (임시 폴더·DB, 4차원)"""
@@ -1478,6 +1568,8 @@ TESTS = [
     ("GUI-07", "GUI·실행", "저장소 관리 설정 (보관 기간·사용량)", t_storage_settings),
     ("GUI-08", "GUI·실행", "메인 '오늘 할 일' 카드 (정렬·체크·제외)", t_todo_card),
     ("GUI-09", "GUI·실행", "메인 카드 17:00 진행 점검 탭", t_todo_card_pm),
+    ("GUI-10", "GUI·실행", "나만의 비서 자동 실행 (09:00·17:00, 놓치면 켤 때)", t_todo_scheduler),
+    ("GUI-11", "GUI·실행", "Settings 나만의 비서 (공휴일·자동 실행)", t_assistant_settings),
 ]
 
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ WeeklyPulse GUI (Flet) — 앱 뼈대: 창 설정, 사이드바 내비게이션,
   teams_settings.py   Settings > Teams 수집·보고 설정
   report_settings.py  Settings > 보고서 설정 (RAG 주제 질의·근거 제외 키워드)
   storage_settings.py Settings > 저장소 관리 (보관 기간·사용량)
-  todo_card.py        메인 '오늘 할 일' 카드 (나만의 비서)
+  todo_card.py        메인 '오늘 할 일' 카드 (나만의 비서, 09:00·17:00 자동 실행)
+  assistant_settings.py Settings > 나만의 비서 (자동 실행·공휴일)
   actions.py          추적·수집·보고서 생성 동작
   widgets.py          공용 컨트롤
 """
@@ -21,6 +22,7 @@ import flet as ft
 
 from weekly_report import paths
 from weekly_report.gui.actions import ActionsMixin
+from weekly_report.gui.assistant_settings import AssistantSettingsMixin
 from weekly_report.gui.dashboard import DashboardMixin
 from weekly_report.gui.report_settings import ReportSettingsMixin
 from weekly_report.gui.storage_settings import StorageSettingsMixin
@@ -51,7 +53,7 @@ def work_area():
 
 
 class WeeklyPulseApp(DashboardMixin, TodoCardMixin, WatchSettingsMixin, TeamsSettingsMixin,
-                     ReportSettingsMixin, StorageSettingsMixin, ActionsMixin):
+                     ReportSettingsMixin, StorageSettingsMixin, AssistantSettingsMixin, ActionsMixin):
     """Modern WeeklyPulse-style application with proper sizing"""
 
     def __init__(self, page: ft.Page):
@@ -298,6 +300,7 @@ def main(page: ft.Page):
     page.add(app.build_ui())
     page.update()
     app.start_status_refresh_loop()
+    app.start_todo_scheduler()  # 근무일 09:00 할 일 추출·17:00 진행 점검 (놓쳤으면 켜자마자)
     # 추적은 프로그램 시작과 동시에 자동으로 켬 — 별도 Start 버튼 없음.
     # FileWatcher import+시작에 수 백ms 걸리므로 UI 표시를 지연시키지 않도록
     # 백그라운드 스레드로 돌림
