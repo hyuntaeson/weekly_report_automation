@@ -126,6 +126,7 @@ weekly_report_automation/
 │   ├── ai/
 │   │   ├── llm_summarizer.py     # 사내 LiteLLM Proxy 요약기 (LCEL 체인, 소스별 프롬프트)
 │   │   ├── clusterer.py          # 임베딩 의미 클러스터링 → "주제별 작업"
+│   │   ├── issues.py             # STEP 2 주요 이슈 & 리스크·다음 주 계획 (근거 인용 검증)
 │   │   └── rag.py                # RAG 주제 질의 → "주제 질의 요약" (근거 인용 검증)
 │   ├── report/
 │   │   ├── sections.py           # STEP 1 프로그램별·항목별 섹션 빌더
@@ -145,7 +146,7 @@ weekly_report_automation/
 │       ├── actions.py            # 추적·수집·보고서 생성 동작
 │       └── widgets.py            # 공용 컨트롤
 ├── tests/
-│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (53건 → test_reports/*.xlsx)
+│   ├── scenario_test.py          # 전체 기능 시나리오 테스트 (54건 → test_reports/*.xlsx)
 │   ├── eval_step3.py             # STEP 3 정답셋 회귀 평가 (→ test_reports/eval_step3_*.md)
 │   └── legacy/                   # 구버전 테스트 (test_all_completed 등)
 ├── scripts/
