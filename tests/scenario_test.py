@@ -529,6 +529,210 @@ def t_mail_teams_fields():
     return ok("Teams @나·@모든 사용자 판정, 받은 메일 수신(To)·참조(CC)·그룹 주소 판정, 1:1 전용 수집(기간·채팅 유형)")
 
 
+def t_todo_store():
+    """일일 할 일 저장소: 직접 체크가 자동 판정보다 우선, 제외(사유)·되돌리기, 이월(횟수·중복 방지), 다시 추출 시 손댄 항목 보존"""
+    import shutil, tempfile
+    from weekly_report.storage.todos import TodoStore
+    tmp = tempfile.mkdtemp(prefix="wr_todo_")
+    try:
+        st = TodoStore(os.path.join(tmp, "t.db"))
+        a, b, c = st.add_items("2026-10-01", [{"task": "배포 체크 회신", "kind": "요청"}, {"task": "DLL 원인 확인", "kind": "내 약속"},
+                                              {"task": "참고 메일", "kind": "요청"}])
+        st.set_done(a, True, by="manual")
+        st.set_status(a, "open", by="auto")          # 자동 판정이 사용자 체크를 덮으면 안 됨
+        st.set_status(b, "in_progress", by="auto")
+        st.remove(c, "영향 없음·참고용")
+        if st.get(a)["status"] != "done" or st.get(a)["done_by"] != "manual" or st.get(b)["status"] != "in_progress":
+            return fail(f"상태 우선순위 오류: {st.get(a)} / {st.get(b)}")
+        if st.get(c)["status"] != "removed" or st.get(c)["removed_reason"] != "영향 없음·참고용":
+            return fail("제외 기록 오류")
+        if [i["id"] for i in st.list_for("2026-10-01")] != [a, b]:
+            return fail("제외 항목이 목록에 보임")
+        st.restore(c)
+        if st.get(c)["status"] != "open":
+            return fail("되돌리기 실패")
+        st.remove(c, "중복")
+        carried = st.carry_over("2026-10-01", "2026-10-02")
+        again = st.carry_over("2026-10-01", "2026-10-02")
+        new = st.list_for("2026-10-02")
+        if len(carried) != 1 or again or new[0]["task"] != "DLL 원인 확인" or new[0]["carry_count"] != 1 \
+                or new[0]["kind"] != "이월" or new[0]["origin_id"] != b:
+            return fail(f"이월 오류: {new}")
+        st.add_items("2026-10-02", [{"task": "새 요청"}, {"task": "체크한 요청"}])
+        checked = [i for i in st.list_for("2026-10-02") if i["task"] == "체크한 요청"][0]["id"]
+        st.set_done(checked, True)
+        st.delete_untouched("2026-10-02")
+        if sorted(i["task"] for i in st.list_for("2026-10-02")) != ["DLL 원인 확인", "체크한 요청"]:
+            return fail(f"다시 추출 시 보존 오류: {st.list_for('2026-10-02')}")
+        return ok("직접 체크 우선·자동 판정 상태, 제외 사유·되돌리기, 이월(횟수·출처·중복 방지), 다시 추출 시 체크·이월 항목 보존")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_todo_extract_rules():
+    """할 일 추출 규칙: 전 근무일 기간(월요일은 금·주말 포함, 공휴일 건너뜀), 출력 파싱, 지난 기한 표시"""
+    from datetime import date, datetime
+    from weekly_report.ai.todos import collection_window, mark_overdue, parse_todo_output, previous_workday
+    if collection_window(date(2026, 10, 5)) != (datetime(2026, 10, 2), datetime(2026, 10, 5, 9)):
+        return fail(f"월요일 기간 오류: {collection_window(date(2026, 10, 5))}")
+    if previous_workday(date(2026, 10, 6), holidays=["2026-10-05"]) != date(2026, 10, 2):
+        return fail("공휴일 건너뛰기 오류")
+    out = ("오늘 | 요청 | 10월2차 배포 항목 체크 회신 | 박동식 | - | 높음 [2]\n"
+           "내일 | 내 약속 | KIS DLL 원인 회신 | 나 | 10/03 | 보통 [1][9]\n"
+           "오늘 | 공지 | 잘못된 종류 | - | - | 보통 [3]\n오늘 | 요청 | 인용 없는 줄 | - | - | 보통\n"
+           "오늘 | 요청 | 서버 담당자 정보 갱신 | 이경수 | 09/30 | 보통 [4]\n없음")
+    items = parse_todo_output(out, evidence_count=5)
+    if [(i["bucket"], i["kind"], i["refs"]) for i in items] != [("today", "요청", [2]), ("tomorrow", "내 약속", [1]),
+                                                                 ("today", "요청", [4])]:
+        return fail(f"파싱 오류: {items}")
+    items = mark_overdue(items, date(2026, 10, 2))
+    if items[2]["due"] != "09/30 (기한 지남)" or items[2]["priority"] != "높음" or items[1]["due"] != "10/03":
+        return fail(f"지난 기한 표시 오류: {items}")
+    return ok("전 근무일 기간(월요일→금요일부터, 공휴일 건너뜀), 종류·인용 검사 파싱, 지난 기한 '기한 지남'·높음")
+
+
+def t_todo_card():
+    """메인 '오늘 할 일' 카드: 높음·이월 먼저, 각 3줄 + 더 보기, 체크=직접 완료 저장, 제외 사유·되돌리기"""
+    import shutil, tempfile
+    from types import SimpleNamespace
+    from datetime import date
+    from weekly_report.gui.app import WeeklyPulseApp
+    from weekly_report.storage.todos import TodoStore
+    tmp = tempfile.mkdtemp(prefix="wr_todocard_")
+    try:
+        app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+        app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None, overlay=[],
+                                   run_thread=lambda fn: None)
+        app.show_snack = lambda msg: None
+        app.todo_store = TodoStore(os.path.join(tmp, "t.db"))
+        app.todo_date = date(2026, 10, 2)
+        app.todo_mode = "am"  # 테스트 시각(17시 전후)에 따라 탭이 바뀌지 않게
+        app.todo_store.add_items("2026-10-02", [
+            {"task": "보통 1", "priority": "보통"}, {"task": "보통 2", "priority": "보통"},
+            {"task": "급한 일", "priority": "높음"}, {"task": "넘어온 일", "priority": "보통", "carry_count": 2, "kind": "이월"},
+            {"task": "내일 일", "bucket": "tomorrow"}])
+        app.create_todo_card()
+        texts = []
+        def walk(c):
+            if isinstance(c, __import__("flet").Text) and isinstance(c.value, str):
+                texts.append(c.value)
+            for attr in ("controls", "content"):
+                v = getattr(c, attr, None)
+                for x in (v if isinstance(v, list) else [v] if v is not None else []):
+                    walk(x)
+        walk(app.todo_body)
+        order = [t for t in texts if t in ("보통 1", "보통 2", "급한 일", "넘어온 일")]
+        if order != ["급한 일", "넘어온 일", "보통 1"]:
+            return fail(f"정렬·더 보기 오류: {order}")
+        item = [i for i in app.todo_store.list_for("2026-10-02") if i["task"] == "급한 일"][0]
+        app.todo_check(item, True)
+        if app.todo_store.get(item["id"])["done_by"] != "manual":
+            return fail("체크가 직접 완료로 저장 안 됨")
+        other = [i for i in app.todo_store.list_for("2026-10-02") if i["task"] == "보통 2"][0]
+        app.todo_remove(other, "내 업무 아님")
+        if app.todo_store.get(other["id"])["status"] != "removed" or not app.page.overlay:
+            return fail("제외·되돌리기 안내 오류")
+        app.todo_restore(other)
+        if app.todo_store.get(other["id"])["status"] != "open":
+            return fail("되돌리기 실패")
+        return ok("높음→이월 순서, 3줄+더 보기, 체크=직접 완료 저장, 제외(사유)·되돌리기")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_todo_progress():
+    """17:00 진행 점검: 판정 출력 파싱, 다음 근무일, 회의·내일 할 일·새 요청 이월 규칙, 실행 기록, 사용자 체크 우선"""
+    import shutil, tempfile
+    from datetime import date
+    from weekly_report.ai.progress import next_workday, parse_progress_output
+    from weekly_report.storage.todos import TodoStore
+    got = parse_progress_output("할일1: 완료 - 14:12 체크 완료 회신\n할일2: 진행중 - 11:05 메일 발송\n"
+                                "할일3: 미착수 - 관련 활동 없음\n할일9: 완료 - 범위 밖", 3)
+    if got != {1: ("done", "14:12 체크 완료 회신"), 2: ("in_progress", "11:05 메일 발송"), 3: ("open", "관련 활동 없음")}:
+        return fail(f"판정 파싱 오류: {got}")
+    if next_workday(date(2026, 10, 2), holidays=["2026-10-05"]) != date(2026, 10, 6):
+        return fail("다음 근무일 오류 (금요일 + 월요일 공휴일)")
+    tmp = tempfile.mkdtemp(prefix="wr_progress_")
+    try:
+        st = TodoStore(os.path.join(tmp, "t.db"))
+        ids = st.add_items("2026-10-02", [
+            {"task": "미완료 요청", "kind": "요청"}, {"task": "15:00 미팅", "kind": "일정", "bucket": "tomorrow"},
+            {"task": "내일 할 일", "kind": "요청", "bucket": "tomorrow"},
+            {"task": "새로 온 요청", "kind": "새 요청", "bucket": "tomorrow"},
+            {"task": "직접 처리", "kind": "요청"}])
+        st.set_done(ids[4], True, by="manual")
+        st.set_status(ids[4], "open", by="auto", note="관련 활동 없음")   # 사용자 체크는 자동 판정이 못 바꿈
+        st.set_status(ids[0], "in_progress", by="auto", note="11:05 메일 발송")
+        if st.get(ids[4])["status"] != "done" or st.get(ids[0])["progress_note"] != "11:05 메일 발송":
+            return fail("판정 저장·사용자 체크 우선 오류")
+        st.mark_run("2026-10-02", "pm")
+        if not st.has_run("2026-10-02", "pm") or st.has_run("2026-10-02", "am"):
+            return fail("실행 기록 오류")
+        st.carry_over("2026-10-02", "2026-10-06")
+        moved = {i["task"]: i for i in st.list_for("2026-10-06")}
+        if set(moved) != {"미완료 요청", "내일 할 일", "새로 온 요청"}:
+            return fail(f"이월 대상 오류(회의·완료는 제외해야 함): {sorted(moved)}")
+        if (moved["미완료 요청"]["kind"], moved["미완료 요청"]["carry_count"]) != ("이월", 1) \
+                or (moved["새로 온 요청"]["kind"], moved["새로 온 요청"]["carry_count"]) != ("요청", 0) \
+                or moved["내일 할 일"]["carry_count"] != 0:
+            return fail(f"이월 종류·횟수 오류: {moved}")
+        return ok("판정 파싱(완료/진행 중/미착수+근거), 다음 근무일(공휴일), 회의 미이월·내일 할 일·새 요청은 횟수 그대로, "
+                  "실행 기록, 사용자 체크 우선")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def t_todo_card_pm():
+    """메인 카드 17:00 탭: 진행률·판정 근거·완료 방법, 점검 전엔 이월 확정 비활성, 새 요청 묶음"""
+    import shutil, tempfile
+    import flet as ft
+    from types import SimpleNamespace
+    from datetime import date
+    from weekly_report.gui.app import WeeklyPulseApp
+    from weekly_report.storage.todos import TodoStore
+    tmp = tempfile.mkdtemp(prefix="wr_todopm_")
+    try:
+        app = WeeklyPulseApp.__new__(WeeklyPulseApp)
+        app.page = SimpleNamespace(window=SimpleNamespace(width=1400), update=lambda: None, overlay=[],
+                                   run_thread=lambda fn: None)
+        app.show_snack = lambda msg: None
+        app.todo_store = TodoStore(os.path.join(tmp, "t.db"))
+        app.todo_date, app.todo_mode = date(2026, 10, 2), "pm"
+        a, b, _ = app.todo_store.add_items("2026-10-02", [{"task": "체크 회신"}, {"task": "원인 확인"},
+                                                          {"task": "새 요청 건", "kind": "새 요청", "bucket": "tomorrow"}])
+        app.create_todo_card()
+        def texts_and_buttons():
+            texts, buttons = [], []
+            def walk(c):
+                if isinstance(c, ft.Text) and isinstance(c.value, str):
+                    texts.append(c.value)
+                if isinstance(c, ft.Button):
+                    buttons.append(c)
+                for attr in ("controls", "content"):
+                    v = getattr(c, attr, None)
+                    for x in (v if isinstance(v, list) else [v] if v is not None else []):
+                        walk(x)
+            walk(app.todo_body)
+            return texts, buttons
+        texts, buttons = texts_and_buttons()
+        if not any(b.disabled for b in buttons if "이월" in str(getattr(b, "content", "") or b.text if hasattr(b, "text") else "")) \
+                and buttons and not buttons[-1].disabled:
+            return fail("점검 전인데 이월 확정이 켜져 있음")
+        app.todo_store.set_status(a, "done", by="auto", note="14:12 '체크 완료했습니다' 회신")
+        app.todo_store.set_status(b, "in_progress", by="auto", note="11:05 KIS에 메일 발송")
+        app.todo_store.mark_run("2026-10-02", "pm")
+        app.render_todo_card()
+        texts, buttons = texts_and_buttons()
+        need = ["진행률 1/2 · 완료 안 된 항목은 다음 근무일 목록으로 이월", "근거: 14:12 '체크 완료했습니다' 회신",
+                "근거: 11:05 KIS에 메일 발송", "새 요청 건"]
+        missing = [n for n in need if not any(n in t for t in texts)]
+        if missing or buttons[-1].disabled:
+            return fail(f"17:00 화면 오류: 없음 {missing}, 이월 확정 비활성={buttons[-1].disabled}")
+        return ok("진행률·판정 근거·새 요청 묶음 표시, 점검 전 이월 확정 비활성 → 점검 후 활성")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def t_storage_retention():
     """저장소 보관 정책: 보관 기간이 지난 주는 요약 벡터 저장 후 활동 벡터 삭제, 요약 실패 주는 보류,
     최근 주는 유지, 레거시 임베딩 테이블 삭제, 장기 질의(요약 → 원본 활동) (임시 폴더·DB, 4차원)"""
@@ -1242,11 +1446,14 @@ TESTS = [
     ("PROC-08", "데이터 가공", "VectorDB 저장·필터 검색 (Qdrant)", t_vector_store),
     ("PROC-09", "데이터 가공", "저장소 보관 정책 (요약 후 벡터 정리)", t_storage_retention),
     ("PROC-10", "데이터 가공", "긴 원문 요약 (Teams 메시지·지난 대화)", t_condense),
+    ("PROC-11", "데이터 가공", "일일 할 일 저장소 (체크·제외·이월)", t_todo_store),
 
     ("AI-01", "AI 분석", "소스별 프롬프트 템플릿", t_llm_templates),
     ("AI-02", "AI 분석", "임베딩 클러스터링 → 주제", t_cluster_topics),
     ("AI-11", "AI 분석", "주제별 작업 예시 이름·개인 주제 제외", t_topic_examples),
     ("AI-12", "AI 분석", "STEP 2 이슈·리스크/다음 주 계획 하네스", t_issues_parse),
+    ("AI-13", "AI 분석", "일일 할 일 추출 규칙 (근무일·파싱·지난 기한)", t_todo_extract_rules),
+    ("AI-14", "AI 분석", "17:00 진행 점검·이월 규칙", t_todo_progress),
     ("AI-03", "AI 분석", "LangChain/LangGraph 임포트", t_langchain_present),
     ("AI-04", "AI 분석", "RAG 근거 인용 검증 (하네스)", t_rag_citation_check),
     ("AI-08", "AI 분석", "근거 노이즈 필터 (IDE·제외 키워드·이름뿐인 기록)", t_evidence_noise_filter),
@@ -1269,6 +1476,8 @@ TESTS = [
     ("GUI-05", "GUI·실행", "주제 질의·근거 제외 설정 (추가·삭제)", t_rag_topic_settings),
     ("GUI-06", "GUI·실행", "보고서 생성 상태 표시", t_report_status_panel),
     ("GUI-07", "GUI·실행", "저장소 관리 설정 (보관 기간·사용량)", t_storage_settings),
+    ("GUI-08", "GUI·실행", "메인 '오늘 할 일' 카드 (정렬·체크·제외)", t_todo_card),
+    ("GUI-09", "GUI·실행", "메인 카드 17:00 진행 점검 탭", t_todo_card_pm),
 ]
 
 if __name__ == "__main__":

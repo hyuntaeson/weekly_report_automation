@@ -9,6 +9,7 @@ WeeklyPulse GUI (Flet) — 앱 뼈대: 창 설정, 사이드바 내비게이션,
   teams_settings.py   Settings > Teams 수집·보고 설정
   report_settings.py  Settings > 보고서 설정 (RAG 주제 질의·근거 제외 키워드)
   storage_settings.py Settings > 저장소 관리 (보관 기간·사용량)
+  todo_card.py        메인 '오늘 할 일' 카드 (나만의 비서)
   actions.py          추적·수집·보고서 생성 동작
   widgets.py          공용 컨트롤
 """
@@ -24,6 +25,7 @@ from weekly_report.gui.dashboard import DashboardMixin
 from weekly_report.gui.report_settings import ReportSettingsMixin
 from weekly_report.gui.storage_settings import StorageSettingsMixin
 from weekly_report.gui.teams_settings import TeamsSettingsMixin
+from weekly_report.gui.todo_card import TodoCardMixin
 from weekly_report.gui.watch_settings import WatchSettingsMixin
 
 # 수집기·보고서 생성기 등 무거운 모듈은 실제 호출 시점에 lazy import —
@@ -48,7 +50,7 @@ def work_area():
         return None
 
 
-class WeeklyPulseApp(DashboardMixin, WatchSettingsMixin, TeamsSettingsMixin,
+class WeeklyPulseApp(DashboardMixin, TodoCardMixin, WatchSettingsMixin, TeamsSettingsMixin,
                      ReportSettingsMixin, StorageSettingsMixin, ActionsMixin):
     """Modern WeeklyPulse-style application with proper sizing"""
 

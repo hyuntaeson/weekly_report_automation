@@ -183,6 +183,7 @@ class DashboardMixin:
         다시 돌아올 때도 재사용."""
         return [
             self.create_header(),
+            self.create_todo_card(),
             self.create_active_sessions(),
             self.create_control_panel(),
         ]
