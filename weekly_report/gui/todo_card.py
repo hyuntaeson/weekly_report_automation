@@ -24,27 +24,34 @@ KIND_ICON = {"요청": ft.Icons.MARK_EMAIL_UNREAD_OUTLINED, "내 약속": ft.Ico
 PRIO_RANK = {"높음": 0, "일정": 2, "보통": 3}
 AUTO_CHECK_MINUTES = 30   # 자동 실행 확인 주기 — 실패하면 다음 확인 때 다시 시도
 CHECK_TIME = time(17, 0)
+PM_FROM = time(15, 0)     # 00~15시는 09:00 오늘 할 일, 15~24시는 17:00 진행 점검 (화면 탭·놓친 실행 모두)
+
+
+def todo_window(now):
+    """지금 시각대에 맞는 탭 — 'am'(00~15시) / 'pm'(15~24시)"""
+    return "pm" if now.time() >= PM_FROM else "am"
 
 
 def todo_due_action(now, holidays=(), has_am=False, has_pm=False, auto=True):
     """지금 자동으로 할 일 — 'am'(오늘 할 일 추출) / 'pm'(진행 점검) / None.
-    근무일에 09:00이 지났는데 아침 추출을 안 했으면 am, 17:00이 지났고 아침 추출은 했는데 점검을 안 했으면 pm.
+    09:00~15:00에 아침 추출을 안 했으면 am, 17:00 이후 점검을 안 했으면 pm (15시가 넘으면 아침 추출은 건너뜀).
     그 시각에 PC가 꺼져 있었어도 프로그램을 켜는 순간 같은 판단으로 놓친 작업을 한다."""
     from weekly_report.ai.todos import WORK_START, is_workday
     if not auto or not is_workday(now.date(), holidays):
         return None
-    if now.time() >= WORK_START and not has_am:
+    t = now.time()
+    if WORK_START <= t < PM_FROM and not has_am:
         return "am"
-    if now.time() >= CHECK_TIME and has_am and not has_pm:
+    if t >= CHECK_TIME and not has_pm:
         return "pm"
     return None
 
 
 def seconds_until_next_check(now):
-    """다음 확인까지 초 — 30분마다 확인하되 09:00·17:00이 그 사이에 있으면 정각에 깨어남"""
+    """다음 확인까지 초 — 30분마다 확인하되 09:00·15:00(탭 전환)·17:00이 그 사이에 있으면 정각에 깨어남"""
     from weekly_report.ai.todos import WORK_START
     wait = timedelta(minutes=AUTO_CHECK_MINUTES)
-    for t in (WORK_START, CHECK_TIME):
+    for t in (WORK_START, PM_FROM, CHECK_TIME):
         at = datetime.combine(now.date(), t)
         if now < at < now + wait:
             wait = at - now
@@ -190,7 +197,7 @@ class TodoCardMixin:
     # ---------- 자동 실행 (5-4) ----------
 
     def start_todo_scheduler(self):
-        """30분마다(09:00·17:00엔 정각에) todo_due_action 확인 — 켜자마자 한 번 확인하므로 놓친 09:00·17:00도 바로 실행.
+        """30분마다(09:00·15:00·17:00엔 정각에) todo_due_action 확인 — 켜자마자 한 번 확인하므로 놓친 09:00·17:00도 바로 실행.
         확인 자체는 DB 조회 2번이고, LLM은 실행할 때만 부른다."""
         async def loop():
             while True:
@@ -206,8 +213,13 @@ class TodoCardMixin:
         settings = load_report_settings()
         now = now or datetime.now()
         key = now.date().isoformat()
+        window = todo_window(now)
         if getattr(self, "todo_date", None) is None and self._todo_today() != now.date():
             self.render_todo_card()  # 자정을 넘기면 카드도 새 날짜로
+        if getattr(self, "_todo_window", window) != window and not self.todo_busy:
+            self.todo_mode = window  # 15시·자정에 탭 전환
+            self.render_todo_card()
+        self._todo_window = window
         action = todo_due_action(now, settings.get("holidays", []), self.todo_store.has_run(key, "am"),
                                  self.todo_store.has_run(key, "pm"), settings.get("todo_auto", True))
         if not action or self.todo_busy:
@@ -308,7 +320,7 @@ class TodoCardMixin:
         today = self._todo_today()
         key = today.isoformat()
         if not hasattr(self, "todo_mode"):
-            self.todo_mode = "pm" if (datetime.now().hour >= 17 or self.todo_store.has_run(key, "pm")) else "am"
+            self.todo_mode = "pm" if (todo_window(datetime.now()) == "pm" or self.todo_store.has_run(key, "pm")) else "am"
         items = self.todo_store.list_for(key)
         today_items = sorted((i for i in items if i["bucket"] == "today"), key=todo_sort_key)
         tomorrow_items = sorted((i for i in items if i["bucket"] == "tomorrow"), key=todo_sort_key)

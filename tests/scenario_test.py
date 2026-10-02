@@ -747,8 +747,10 @@ def t_todo_scheduler():
         (datetime(2026, 10, 2, 9, 0), False, False, True, "am"),
         (datetime(2026, 10, 2, 13, 40), False, False, True, "am"),   # 아침에 PC가 꺼져 있었음 → 켤 때
         (datetime(2026, 10, 2, 13, 40), True, False, True, None),
+        (datetime(2026, 10, 2, 14, 59), False, False, True, "am"),
+        (datetime(2026, 10, 2, 15, 30), False, False, True, None),   # 15시 이후엔 아침 추출 건너뜀, 17시 대기
         (datetime(2026, 10, 2, 18, 30), True, False, True, "pm"),    # 17시에 꺼져 있었음 → 켤 때
-        (datetime(2026, 10, 2, 18, 30), False, False, True, "am"),   # 하루 종일 꺼져 있었으면 추출부터
+        (datetime(2026, 10, 2, 18, 30), False, False, True, "pm"),   # 하루 종일 꺼져 있었어도 15시 이후면 점검
         (datetime(2026, 10, 2, 18, 30), True, True, True, None),
         (datetime(2026, 10, 3, 10, 0), False, False, True, None),    # 토요일
         (datetime(2026, 10, 5, 10, 0), False, False, True, None),    # 대체공휴일
@@ -759,7 +761,12 @@ def t_todo_scheduler():
         if got != want:
             return fail(f"{now:%m-%d %H:%M} am={am} pm={pm} auto={auto}: {got} (기대 {want})")
     waits = {datetime(2026, 10, 2, 8, 50): 601, datetime(2026, 10, 2, 9, 0): 1801,
-             datetime(2026, 10, 2, 16, 45): 901, datetime(2026, 10, 2, 11, 0): 1801}
+             datetime(2026, 10, 2, 16, 45): 901, datetime(2026, 10, 2, 11, 0): 1801,
+             datetime(2026, 10, 2, 14, 45): 901}
+    from weekly_report.gui.todo_card import todo_window
+    if (todo_window(datetime(2026, 10, 2, 0, 0)), todo_window(datetime(2026, 10, 2, 14, 59)),
+            todo_window(datetime(2026, 10, 2, 15, 0)), todo_window(datetime(2026, 10, 2, 23, 59))) != ("am", "am", "pm", "pm"):
+        return fail("시각대 탭 오류 (00~15시 09:00, 15~24시 17:00)")
     for now, want in waits.items():
         if seconds_until_next_check(now) != want:
             return fail(f"{now:%H:%M} 다음 확인 {seconds_until_next_check(now)}초 (기대 {want})")
@@ -787,8 +794,17 @@ def t_todo_scheduler():
         if (first, mid, last, busy) != ("am", None, "pm", None) or calls != [("am", False), ("pm",)] \
                 or app.todo_mode != "pm":
             return fail(f"자동 실행 호출 오류: {first, mid, last, busy} {calls}")
-        return ok("09:00 추출·17:00 점검, 놓친 시각은 켤 때 실행, 주말·공휴일·끔 건너뜀, "
-                  "30분 확인이되 09:00·17:00엔 정각에, 실행 중이면 겹치지 않음")
+        app.todo_busy, app.todo_mode = False, "am"
+        rag.load_report_settings = lambda: {"holidays": H, "todo_auto": True}
+        try:
+            app._todo_window = "am"
+            app._todo_auto_tick(datetime(2026, 10, 2, 15, 0))
+        finally:
+            rag.load_report_settings = orig
+        if app.todo_mode != "pm":
+            return fail("15시에 17:00 탭으로 안 바뀜")
+        return ok("09~15시 추출·17시 이후 점검(15시 넘으면 추출 건너뜀), 놓친 시각은 켤 때 실행, 주말·공휴일·끔 건너뜀, "
+                  "00~15시 09:00 탭·15~24시 17:00 탭, 30분 확인이되 09·15·17시엔 정각에, 실행 중이면 겹치지 않음")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1568,7 +1584,7 @@ TESTS = [
     ("GUI-07", "GUI·실행", "저장소 관리 설정 (보관 기간·사용량)", t_storage_settings),
     ("GUI-08", "GUI·실행", "메인 '오늘 할 일' 카드 (정렬·체크·제외)", t_todo_card),
     ("GUI-09", "GUI·실행", "메인 카드 17:00 진행 점검 탭", t_todo_card_pm),
-    ("GUI-10", "GUI·실행", "나만의 비서 자동 실행 (09:00·17:00, 놓치면 켤 때)", t_todo_scheduler),
+    ("GUI-10", "GUI·실행", "나만의 비서 자동 실행 (09:00·17:00, 놓치면 켤 때, 15시 탭 전환)", t_todo_scheduler),
     ("GUI-11", "GUI·실행", "Settings 나만의 비서 (공휴일·자동 실행)", t_assistant_settings),
 ]
 

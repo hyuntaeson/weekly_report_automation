@@ -30,7 +30,7 @@ class AssistantSettingsMixin:
             [
                 ft.Text("나만의 비서", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
                 ft.Text("프로그램이 켜져 있으면 근무일 09:00에 오늘 할 일을 뽑고 17:00에 진행 상황을 점검합니다. "
-                        "그 시각에 PC가 꺼져 있었으면 다음에 켤 때 바로 실행합니다. "
+                        "그 시각에 PC가 꺼져 있었으면 다음에 켤 때 바로 실행합니다 (15시 전이면 오늘 할 일 추출, 15시 이후면 17:00 점검 — 15시가 넘으면 아침 추출은 건너뜀). "
                         "주말과 아래 공휴일·휴무일은 근무일에서 빠집니다 (월요일·연휴 다음 날은 직전 근무일부터 분석).",
                         size=12, color=ft.Colors.GREY_600),
                 auto,
